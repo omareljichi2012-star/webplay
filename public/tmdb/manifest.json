@@ -1,0 +1,123 @@
+{
+  "generatedAt": "2026-11-20T09:26:21.184Z",
+  "totalTitles": 92000,
+  "moviesCount": 56000,
+  "tvCount": 36000,
+  "genres": {
+    "12": "Adventure",
+    "14": "Fantasy",
+    "16": "Animation",
+    "18": "Drama",
+    "27": "Horror",
+    "28": "Action",
+    "35": "Comedy",
+    "36": "History",
+    "37": "Western",
+    "53": "Thriller",
+    "80": "Crime",
+    "99": "Documentary",
+    "878": "Science Fiction",
+    "9648": "Mystery",
+    "10402": "Music",
+    "10749": "Romance",
+    "10751": "Family",
+    "10752": "War",
+    "10759": "Action & Adventure",
+    "10762": "Kids",
+    "10763": "News",
+    "10764": "Reality",
+    "10765": "Sci-Fi & Fantasy",
+    "10766": "Soap",
+    "10767": "Talk",
+    "10768": "War & Politics",
+    "10770": "TV Movie"
+  },
+  "movieChunks": [
+    {
+      "file": "movies_0.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_1.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_2.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_3.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_4.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_5.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_6.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_7.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_8.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_9.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_10.json",
+      "count": 5000
+    },
+    {
+      "file": "movies_11.json",
+      "count": 1000
+    }
+  ],
+  "tvChunks": [
+    {
+      "file": "tv_0.json",
+      "count": 5000
+    },
+    {
+      "file": "tv_1.json",
+      "count": 5000
+    },
+    {
+      "file": "tv_2.json",
+      "count": 5000
+    },
+    {
+      "file": "tv_3.json",
+      "count": 5000
+    },
+    {
+      "file": "tv_4.json",
+      "count": 5000
+    },
+    {
+      "file": "tv_5.json",
+      "count": 5000
+    },
+    {
+      "file": "tv_6.json",
+      "count": 5000
+    },
+    {
+      "file": "tv_7.json",
+      "count": 1000
+    }
+  ],
+  "fullIndexGeneratedAt": "2026-11-20T10:34:34.132Z",
+  "fullMoviesCount": 1276553,
+  "fullTvCount": 237189,
+  "fullTotalTitles": 1513742
+}
