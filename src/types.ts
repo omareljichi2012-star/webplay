@@ -38,6 +38,8 @@ export interface GameItem {
   developer?: string;
   releaseDate: string;
   embed_url?: string;
+  gameplayVideoUrl?: string;
+  steamGridGameId?: number;
   releaseYear?: number;
   status?: 'coming_soon' | 'active' | string;
 }
@@ -75,6 +77,8 @@ export interface ManifestGameItem {
   streamUrl?: string;
   rom_url?: string;
   embed_url?: string;
+  gameplayVideoUrl?: string;
+  steamGridGameId?: number;
 }
 
 export interface ConsoleSource {

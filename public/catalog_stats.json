@@ -1,7 +1,7 @@
 {
   "status": "success",
   "totalPlatforms": 17,
-  "totalGames": 15221,
+  "totalGames": 17198,
   "platformCounts": {
     "NES": 1444,
     "SNES": 1235,
@@ -9,7 +9,7 @@
     "Game Boy Color": 1026,
     "GBA": 1394,
     "N64": 527,
-    "PS1": 2070,
+    "PS1": 4047,
     "Sega Genesis": 1258,
     "Master System": 645,
     "Game Gear": 498,

@@ -30,14 +30,21 @@ import {
   createCastAvatarFallback,
   fetchTmdbDetails,
   fetchTvSeasonEpisodes,
+  formatReleaseNote,
+  isUpcomingDate,
+  resolveAniListId,
 } from '../services/tmdb';
 import { handlePosterImageError } from '../utils/posterFallback';
+import { useTheme } from '../context/ThemeContext';
 
 export interface MoviePlayerTarget {
   mediaType: TmdbMediaType;
   tmdbId: string;
   customRawId?: string;
   previewItem?: TmdbCatalogItem;
+  initialSeason?: number;
+  initialEpisode?: number;
+  sourceTab?: 'movies' | 'tv' | 'anime' | 'cartoons';
 }
 
 interface MoviePlayerViewProps {
@@ -70,6 +77,7 @@ function formatRuntime(minutes: number | null): string {
 }
 
 export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClose }) => {
+  const { isNetflix, isPopcorn, isGamOnl, isKaleidescape, settings } = useTheme();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const playerStageRef = useRef<HTMLElement | null>(null);
 
@@ -80,6 +88,7 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
   const [showAllCast, setShowAllCast] = useState<boolean>(false);
 
   const [season, setSeason] = useState<number>(() => {
+    if (target.initialSeason && target.initialSeason > 0) return target.initialSeason;
     try {
       const s = Number(new URLSearchParams(window.location.search).get('s') || 1);
       return Number.isFinite(s) && s > 0 ? s : 1;
@@ -88,6 +97,7 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
     }
   });
   const [episode, setEpisode] = useState<number>(() => {
+    if (target.initialEpisode && target.initialEpisode > 0) return target.initialEpisode;
     try {
       const e = Number(new URLSearchParams(window.location.search).get('e') || 1);
       return Number.isFinite(e) && e > 0 ? e : 1;
@@ -102,12 +112,17 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
       const urlServer = new URLSearchParams(window.location.search).get('server');
       if (urlServer && SERVERS[urlServer]) return urlServer;
     } catch {}
+    if (settings?.defaultVideoServer && SERVERS[settings.defaultVideoServer]) {
+      return settings.defaultVideoServer;
+    }
     return DEFAULT_MOVIE_SERVER_KEY;
   });
 
   const [preferredIdMode, setPreferredIdMode] = useState<'tmdb' | 'imdb'>(() =>
     isImdbId(target.customRawId) ? 'imdb' : 'tmdb'
   );
+  const [resolvedAnilistId, setResolvedAnilistId] = useState<number | null>(null);
+  const [customAnilistId, setCustomAnilistId] = useState<string>('');
   const [copiedUrl, setCopiedUrl] = useState<boolean>(false);
 
   // Scroll to top when opening the player page
@@ -187,6 +202,47 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
   const activeImdbId =
     activeDetails?.imdbId || (isImdbId(target.customRawId) ? target.customRawId || null : null);
 
+  const isAnimeTitle = useMemo(() => {
+    if (target.sourceTab === 'anime') return true;
+    const genreIds = activeDetails?.genreIds || target.previewItem?.genreIds || [];
+    const genreNames = activeDetails?.genreNames || target.previewItem?.genreNames || [];
+    const hasAnim =
+      genreIds.includes(16) ||
+      genreNames.some((g) => g.toLowerCase() === 'animation') ||
+      Boolean(activeDetails?.genres?.some((g) => g.id === 16 || g.name.toLowerCase() === 'animation'));
+    const isJp =
+      activeDetails?.originalLanguage === 'ja' ||
+      Boolean(activeDetails?.originCountries?.includes('JP'));
+    return hasAnim && isJp;
+  }, [target.sourceTab, target.previewItem, activeDetails]);
+
+  const effectiveTitleForLookup = activeDetails?.title || target.previewItem?.title || '';
+  const effectiveYearForLookup = activeDetails?.year || target.previewItem?.year || '';
+
+  useEffect(() => {
+    if (!isAnimeTitle || !effectiveTitleForLookup) {
+      setResolvedAnilistId(null);
+      return;
+    }
+    let cancelled = false;
+    resolveAniListId(effectiveTitleForLookup, {
+      season,
+      year: effectiveYearForLookup,
+      mediaType: activeMediaType,
+    }).then((id) => {
+      if (!cancelled) setResolvedAnilistId(id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAnimeTitle, effectiveTitleForLookup, effectiveYearForLookup, season, activeMediaType]);
+
+  const effectiveAnilistId = useMemo(() => {
+    const cleaned = customAnilistId.trim();
+    if (/^\d+$/.test(cleaned)) return Number(cleaned);
+    return resolvedAnilistId;
+  }, [customAnilistId, resolvedAnilistId]);
+
   const effectiveEmbedId =
     preferredIdMode === 'imdb' && activeImdbId ? activeImdbId : activeTmdbId;
 
@@ -195,10 +251,20 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
     return buildMediaEmbedUrl(activeServerKey, activeMediaType, effectiveEmbedId, {
       imdbId: activeImdbId,
       tmdbId: activeTmdbId,
+      anilistId: effectiveAnilistId,
       season,
       episode,
     });
-  }, [activeServerKey, activeMediaType, effectiveEmbedId, activeImdbId, activeTmdbId, season, episode]);
+  }, [
+    activeServerKey,
+    activeMediaType,
+    effectiveEmbedId,
+    activeImdbId,
+    activeTmdbId,
+    effectiveAnilistId,
+    season,
+    episode,
+  ]);
 
   const syncQueryParams = useCallback(
     (mediaType: TmdbMediaType, idValue: string, serverKey: string, s: number, e: number) => {
@@ -245,6 +311,7 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
     const url = buildMediaEmbedUrl(serverKey, mediaType, idValue, {
       imdbId: activeImdbId,
       tmdbId: activeTmdbId,
+      anilistId: effectiveAnilistId,
       season: s,
       episode: e,
     });
@@ -334,15 +401,21 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
 
   const episodeOptions = useMemo(() => {
     const count = Math.max(1, activeSeasonInfo?.episodeCount || 1);
+    const parentUpcoming = isUpcomingDate(activeSeasonInfo?.airDate, activeDetails?.status);
     return Array.from({ length: count }, (_, idx) => {
       const epNum = idx + 1;
       const matched = seasonEpisodes.find((e) => e.episodeNumber === epNum);
+      const epUpcoming = parentUpcoming || isUpcomingDate(matched?.airDate, activeDetails?.status);
       return {
         number: epNum,
-        label: matched ? `E${epNum}: ${matched.name}` : `Episode ${epNum}`,
+        airDate: matched?.airDate || activeSeasonInfo?.airDate || '',
+        isUpcoming: epUpcoming,
+        label: `${matched ? `E${epNum}: ${matched.name}` : `Episode ${epNum}`}${
+          epUpcoming ? ' (Upcoming)' : ''
+        }`,
       };
     });
-  }, [activeSeasonInfo?.episodeCount, seasonEpisodes]);
+  }, [activeSeasonInfo?.episodeCount, activeSeasonInfo?.airDate, activeDetails?.status, seasonEpisodes]);
 
   const displayedCast = useMemo(() => {
     const list = activeDetails?.cast || [];
@@ -361,17 +434,74 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
   const playerReleaseDate =
     activeDetails?.releaseDate || target.previewItem?.releaseDate || '';
 
+  const activeEpisodeObj = episodeOptions.find((e) => e.number === episode);
+  const activeSelectionUpcoming = useMemo(() => {
+    if (activeMediaType === 'movie') {
+      return isUpcomingDate(playerReleaseDate, activeDetails?.status);
+    }
+    return (
+      Boolean(activeEpisodeObj?.isUpcoming) ||
+      isUpcomingDate(activeSeasonInfo?.airDate, activeDetails?.status) ||
+      isUpcomingDate(playerReleaseDate, activeDetails?.status)
+    );
+  }, [
+    activeMediaType,
+    playerReleaseDate,
+    activeDetails?.status,
+    activeEpisodeObj?.isUpcoming,
+    activeSeasonInfo?.airDate,
+  ]);
+  const upcomingDateNote = formatReleaseNote(
+    activeMediaType === 'tv'
+      ? activeEpisodeObj?.airDate || activeSeasonInfo?.airDate || playerReleaseDate
+      : playerReleaseDate
+  );
+
   return (
-    <div className="min-h-screen w-full bg-[#08080a] text-[#f7f7fb] flex flex-col">
+    <div
+      className={`min-h-screen w-full flex flex-col ${
+        isNetflix
+          ? 'bg-[#141414] text-white'
+          : isPopcorn
+          ? 'bg-[#0c0e14] text-white'
+          : isGamOnl
+          ? 'bg-[#0d0f14] text-white'
+          : isKaleidescape
+          ? 'bg-[#000000] text-white'
+          : 'bg-[#08080a] text-[#f7f7fb]'
+      }`}
+    >
       {/* Standalone Top Player Bar */}
-      <header className="sticky top-0 z-40 bg-[#0d0d10]/95 backdrop-blur-md border-b border-[#222228] px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+      <header
+        className={`sticky top-0 z-40 backdrop-blur-md border-b px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl ${
+          isNetflix
+            ? 'bg-[#141414]/95 border-[#262626]'
+            : isPopcorn
+            ? 'bg-[#0c0e14]/95 border-[#232c40]'
+            : isGamOnl
+            ? 'bg-[#0d0f14]/95 border-[#22293b]'
+            : isKaleidescape
+            ? 'bg-[#05080f]/95 border-[#1b3352]'
+            : 'bg-[#0d0d10]/95 border-[#222228]'
+        }`}
+      >
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
             onClick={handleBackClick}
             aria-label="Back to Catalog"
             title="Back to Catalog"
-            className="w-9 h-9 rounded-full bg-[#18181d] hover:bg-[#272730] border border-[#2f2f38] hover:border-white/30 text-neutral-300 hover:text-white grid place-items-center transition-all shrink-0 cursor-pointer shadow-md"
+            className={`w-9 h-9 rounded-full border text-neutral-300 hover:text-white grid place-items-center transition-all shrink-0 cursor-pointer shadow-md ${
+              isNetflix
+                ? 'bg-[#222222] hover:bg-[#323232] border-[#383838]'
+                : isPopcorn
+                ? 'bg-[#141a26] hover:bg-[#1e283b] border-[#2e3b55] hover:border-[#3fa9f5]/60'
+                : isGamOnl
+                ? 'bg-[#13161f] hover:bg-[#1b2130] border-[#262e42] hover:border-[#22c55e]/60'
+                : isKaleidescape
+                ? 'bg-[#0c1626] hover:bg-[#162742] border-[#1f3b5c] hover:border-[#f2c94c]/70'
+                : 'bg-[#18181d] hover:bg-[#272730] border-[#2f2f38] hover:border-white/30'
+            }`}
           >
             <X size={17} strokeWidth={2.4} />
           </button>
@@ -392,7 +522,7 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
           <button
             type="button"
             onClick={handleReloadIframe}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#2c2c34] bg-[#18181d] hover:bg-[#24242b] text-neutral-200 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#2c2c34] bg-[#18181d] hover:bg-[#24242b] text-neutral-200 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer"
           >
             <RotateCcw size={13} />
             <span>Reload</span>
@@ -400,7 +530,13 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
           <button
             type="button"
             onClick={handleFullscreen}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-neutral-200 text-black text-xs font-extrabold transition-colors whitespace-nowrap cursor-pointer"
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-extrabold transition-colors whitespace-nowrap cursor-pointer ${
+              isNetflix
+                ? 'bg-[#E50914] hover:bg-[#f40612] text-white'
+                : isPopcorn
+                ? 'bg-[#3fa9f5] hover:bg-[#5ebaff] text-white'
+                : 'bg-white hover:bg-neutral-200 text-black'
+            }`}
           >
             <Maximize2 size={13} />
             <span>Fullscreen</span>
@@ -436,7 +572,7 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
               className="w-full h-full border-0 block bg-black"
               allowFullScreen
               credentialless={true}
-              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+              allow="encrypted-media *; autoplay *; fullscreen *; picture-in-picture"
               referrerPolicy="no-referrer"
             />
           </div>
@@ -457,11 +593,14 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
                     onChange={(e) => handleSeasonChange(Number(e.target.value))}
                     className="px-2.5 py-1.5 rounded-lg bg-[#18181b] border border-[#2e2e36] text-xs font-bold text-white outline-none focus:border-neutral-400 cursor-pointer tabular-nums"
                   >
-                    {tvSeasons.map((s) => (
-                      <option key={s.id || s.seasonNumber} value={s.seasonNumber}>
-                        {s.name} ({s.episodeCount} eps)
-                      </option>
-                    ))}
+                    {tvSeasons.map((s) => {
+                      const sUpcoming = isUpcomingDate(s.airDate, activeDetails?.status);
+                      return (
+                        <option key={s.id || s.seasonNumber} value={s.seasonNumber}>
+                          {s.name} ({s.episodeCount} eps){sUpcoming ? ' · Upcoming' : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </label>
 
@@ -506,12 +645,23 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
             </div>
           )}
 
+          {activeSelectionUpcoming && (
+            <div className="px-4 sm:px-5 py-2.5 bg-amber-950/35 border-t border-amber-500/35 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-200">
+              <span>
+                <strong className="text-amber-300">Upcoming:</strong> This{' '}
+                {activeMediaType === 'tv' ? 'season / episode' : 'movie'} is not out yet ({upcomingDateNote}). Streaming servers may not have video until release.
+              </span>
+            </div>
+          )}
+
           {/* Multi-Server Grid Switcher UNDER the player */}
           <div className="border-t border-[#222228]">
             <ServerSwitcherGrid
               servers={serverList}
               activeKey={activeServerKey}
               onSelect={handleSelectServer}
+              showAnimeServers={isAnimeTitle}
+              anilistId={effectiveAnilistId}
             />
           </div>
 
@@ -548,12 +698,24 @@ export const MoviePlayerView: React.FC<MoviePlayerViewProps> = ({ target, onClos
             </div>
           )}
 
-          {/* Active Embed URL */}
+          {/* Active Embed URL + Optional AniList ID Override for Anime */}
           <div className="px-4 sm:px-5 py-2.5 bg-[#0a0a0c] border-t border-[#222228] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
               <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-[#1c1c22] text-neutral-200 border border-[#2c2c34] shrink-0">
                 {activeServerConfig.label}
               </span>
+              {activeServerConfig.idType === 'anilist' && (
+                <label className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#14141c] border border-violet-500/40 text-[11px] text-violet-200 shrink-0">
+                  <span className="font-bold">AniList ID:</span>
+                  <input
+                    type="text"
+                    value={customAnilistId || (resolvedAnilistId ? String(resolvedAnilistId) : '')}
+                    onChange={(e) => setCustomAnilistId(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="Auto"
+                    className="w-16 bg-transparent font-mono text-white outline-none"
+                  />
+                </label>
+              )}
               <code
                 className="text-xs font-mono text-neutral-400 truncate block select-all"
                 title={activeEmbedUrl}

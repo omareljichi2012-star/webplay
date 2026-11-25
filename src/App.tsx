@@ -23,19 +23,51 @@ import {
   ShieldCheck,
   Layers,
   Flame,
-  CheckCircle2
+  CheckCircle2,
+  ChevronDown,
+  Bookmark,
+  Check,
+  Heart,
+  Info,
+  Settings,
+  Radio
 } from 'lucide-react';
 import { GameItem, GameReview, ManifestGameItem } from './types';
 import { CONSOLE_SOURCES } from './sources';
 import { getGameReviews, saveUserReview } from './reviews';
-import { PlayerView, SafeGameImage, GameBox3DModal, StreamPlayer, AdSenseBanner, FeaturedHeroBanner, ComicsSection, MoviesSection, MoviePlayerView, MoviePlayerTarget } from './components';
-import type { MoviesCatalogState } from './components/MoviesSection';
+import { PlayerView, SafeGameImage, GameBox3DModal, StreamPlayer, AdSenseBanner, FeaturedHeroBanner, ComicsComingSoon, MoviesSection, MoviePlayerView, MoviePlayerTarget, WebPlayTimeLogo, PopcornClapperIcon, PopcornRetroTvIcon, ConsoleBoxOverlay, SettingsModal, GamOnlView, KaleidescapeWall, NostalgiaTvView } from './components';
+import type { MoviesCatalogState, CinemaSectionMode } from './components/MoviesSection';
 import { enrichGameWithLaunchBox3D, enrichManifestWithLaunchBoxApi, enrichGameWithLaunchBoxApi } from './launchboxApi';
-import { STREAMING_CATALOG, MediaStreamItem, STREAM_X_BASE_URL, TOONIX_BASE_URL } from './data/streamingData';
+import { STREAMING_CATALOG, MediaStreamItem } from './data/streamingData';
 import { adShield } from './utils/adBlocker';
 import { GTA_V_POSTER_URL, handlePosterImageError } from './utils/posterFallback';
 import { fetchServerCatalogStats, fetchTmdbArchiveManifest, findByImdbId } from './services/tmdb';
 import { isImdbId } from './utils/movieServers';
+import { useTheme, NetflixProfile } from './context/ThemeContext';
+
+const NetflixProfileAvatar: React.FC<{ profile: NetflixProfile; size?: number }> = ({ profile, size = 28 }) => {
+  const bg = profile === 'Kids' ? '#0ea5e9' : profile === 'Anime' ? '#eab308' : '#E50914';
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      className="rounded-[4px] shrink-0"
+      aria-hidden="true"
+    >
+      <rect width="32" height="32" rx="4" fill={bg} />
+      <circle cx="10.5" cy="12" r="2" fill="#ffffff" />
+      <circle cx="21.5" cy="12" r="2" fill="#ffffff" />
+      <path
+        d="M9 19 C12.5 23.5, 19.5 23.5, 23 19"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+};
 
 
 // Declare Ruffle global
@@ -85,6 +117,30 @@ const DEFAULT_CONSOLE_TABS = [
 const ITEMS_PER_PAGE = 50; // Optimized 50 items per view page for massive 1,000+ catalog
 
 export default function App() {
+  const {
+    theme,
+    isNetflix,
+    isPopcorn,
+    isGamOnl,
+    isKaleidescape,
+    netflixProfile,
+    setNetflixProfile,
+    myList,
+    settings,
+  } = useTheme();
+
+  const [showNetflixMyList, setShowNetflixMyList] = useState(false);
+  useEffect(() => {
+    if (theme !== 'netflix') {
+      setShowNetflixMyList(false);
+    }
+  }, [theme]);
+  const [showNetflixSearch, setShowNetflixSearch] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showPopcornSearch, setShowPopcornSearch] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [popcornGameDetail, setPopcornGameDetail] = useState<GameItem | null>(null);
+
   const [games, setGames] = useState<GameItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [tmdbCounts, setTmdbCounts] = useState<{ movies: number; tv: number; total: number } | null>(null);
@@ -130,15 +186,21 @@ export default function App() {
   const [activeGame, setActiveGame] = useState<GameItem | null>(null);
   const [activeStreamItem, setActiveStreamItem] = useState<MediaStreamItem | null>(null);
   const [activeMovieTarget, setActiveMovieTarget] = useState<MoviePlayerTarget | null>(null);
-  const moviesCatalogMemoryRef = useRef<{ movies?: MoviesCatalogState; tv?: MoviesCatalogState }>({});
-  const [mainTab, setMainTab] = useState<'games' | 'movies' | 'tv' | 'anime' | 'comics' | 'cartoons' | 'streamx' | 'toonix'>(() => {
+  const moviesCatalogMemoryRef = useRef<Partial<Record<CinemaSectionMode, MoviesCatalogState>>>({});
+  const [mainTab, setMainTab] = useState<'games' | 'movies' | 'tv' | 'anime' | 'cartoons' | 'nostalgia' | 'comics'>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       if (params.get('tv')) return 'tv';
       if (params.get('movie') || params.get('id')) return 'movies';
     } catch {}
-    return 'games';
+    return settings.defaultSection || 'games';
   });
+
+  const handleSelectMainTab = (nextTab: 'games' | 'movies' | 'tv' | 'anime' | 'cartoons' | 'nostalgia' | 'comics') => {
+    setShowNetflixMyList(false);
+    setPopcornGameDetail(null);
+    setMainTab(nextTab);
+  };
 
   // Open standalone Movie/TV player page directly when URL contains ?movie=, ?tv=, or ?id=
   useEffect(() => {
@@ -363,6 +425,7 @@ export default function App() {
                   const slug = item.slug || '';
                   const encodedSlug = slug.split('/').map((p: string) => encodeURIComponent(p)).join('/');
                   const targetUrl =
+                    item.embed_url ||
                     item.streamUrl ||
                     item.url ||
                     item.rom_url ||
@@ -379,7 +442,7 @@ export default function App() {
                     engine: item.engine || source.engine,
                     core: item.core || source.core,
                     url: targetUrl,
-                    streamUrl: item.streamUrl || targetUrl,
+                    streamUrl: item.embed_url || item.streamUrl || targetUrl,
                     rom_url: targetUrl,
                   };
                   mapped.push(enrichGameWithLaunchBox3D(baseGame));
@@ -713,6 +776,7 @@ export default function App() {
 
     const isCustomWeb = activeGame.engine === 'web' ||
                         activeGame.engine === 'iframe' ||
+                        Boolean(activeGame.embed_url) ||
                         activeGame.consoleType === 'WebPort' ||
                         activeGame.consoleType === 'Web Port' ||
                         activeGame.id === 'webport-gtav' ||
@@ -908,7 +972,7 @@ export default function App() {
 
   // Computed streaming catalog filtered by active main tab
   const streamingItems = useMemo(() => {
-    if (mainTab === 'games' || mainTab === 'comics') return [];
+    if (mainTab === 'games' || mainTab === 'comics' || mainTab === 'nostalgia') return [];
     if (mainTab === 'movies') return STREAMING_CATALOG.filter(i => i.category === 'Movies');
     if (mainTab === 'tv') return STREAMING_CATALOG.filter(i => i.category === 'TV Shows');
     if (mainTab === 'anime') return STREAMING_CATALOG.filter(i => i.category === 'Anime');
@@ -967,449 +1031,837 @@ export default function App() {
     );
   }
 
-  const isCinemaTab = mainTab === 'movies' || mainTab === 'tv';
+  const isCinemaDiscoverTab =
+    mainTab === 'movies' ||
+    mainTab === 'tv' ||
+    mainTab === 'anime' ||
+    mainTab === 'cartoons' ||
+    showNetflixMyList;
+
+  const navTabs: Array<{
+    key: 'games' | 'movies' | 'tv' | 'anime' | 'cartoons' | 'nostalgia' | 'comics';
+    label: string;
+    icon: React.ReactNode;
+    badge?: string;
+  }> = [
+    { key: 'games', label: 'Retro Games', icon: <Gamepad2 size={15} />, badge: String(games.length) },
+    {
+      key: 'movies',
+      label: 'Movies',
+      icon: <Film size={15} />,
+      badge: tmdbCounts ? tmdbCounts.movies.toLocaleString() : undefined,
+    },
+    {
+      key: 'tv',
+      label: 'TV Shows',
+      icon: <Tv size={15} />,
+      badge: tmdbCounts ? tmdbCounts.tv.toLocaleString() : undefined,
+    },
+    { key: 'anime', label: 'Anime', icon: <Flame size={15} /> },
+    { key: 'cartoons', label: 'Cartoons', icon: <Smile size={15} /> },
+    { key: 'nostalgia', label: 'Nostalgia TV', icon: <Radio size={15} /> },
+    { key: 'comics', label: 'Comics', icon: <BookOpen size={15} /> },
+  ];
 
   return (
-    <div className={`app-shell ${isCinemaTab ? 'cinema-mode' : ''}`}>
-      {/* Topbar */}
-      <header className="topbar">
-        <div className="brand-lockup">
-          <div>
-            <div className="eyebrow">
-              <span>STREAM X</span>
-            </div>
-            <h1>Multi-Media Streaming & Retro Arcade Suite</h1>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main>
-        {/* Stream X Main Mode Switcher Navigation */}
-        <div className="streamx-modes pt-4">
-          <button
-            onClick={() => setMainTab('games')}
-            className={`mode-btn ${mainTab === 'games' ? 'active' : ''}`}
-          >
-            <Gamepad2 size={15} />
-            <span>Retro Games</span>
-            <span style={{ opacity: 0.7, fontSize: '10px' }}>({games.length})</span>
-          </button>
-          <button
-            onClick={() => setMainTab('movies')}
-            className={`mode-btn ${mainTab === 'movies' ? 'active' : ''}`}
-          >
-            <Film size={15} />
-            <span>Movies</span>
-            {tmdbCounts && (
-              <span style={{ opacity: 0.7, fontSize: '10px' }}>
-                ({tmdbCounts.movies.toLocaleString()})
-              </span>
+    <div className={`app-shell ${isNetflix ? 'theme-netflix' : isPopcorn ? 'theme-popcorn' : isGamOnl ? 'theme-gamonl' : isKaleidescape ? 'theme-kaleidescape' : 'theme-obsidian'}`}>
+      {isKaleidescape ? (
+        <>
+          <KaleidescapeWall
+            mode={mainTab}
+            onChangeMode={(next) => handleSelectMainTab(next)}
+            games={games}
+            gamesLoading={loading}
+            consoleTabs={consoleTabs}
+            selectedConsole={selectedConsole}
+            onSelectConsole={setSelectedConsole}
+            favorites={favorites}
+            onToggleFavorite={toggleFavorite}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onSelectMedia={(target) => {
+              setActiveMovieTarget(target);
+              setCurrentView('movie_player');
+            }}
+            onLaunchGame={handleLaunchGame}
+            onInspect3D={(game) => {
+              setInspecting3DGame(game);
+              enrichGameWithLaunchBoxApi(game, (updated) => {
+                setInspecting3DGame(updated);
+                setGames(prev => prev.map(g => g.id === updated.id ? { ...g, ...updated } : g));
+              });
+            }}
+            onOpenSettings={() => setShowSettingsModal(true)}
+            renderComicsFallback={() => (
+              <ComicsComingSoon onExploreTab={(tab) => handleSelectMainTab(tab)} />
             )}
-          </button>
-          <button
-            onClick={() => setMainTab('tv')}
-            className={`mode-btn ${mainTab === 'tv' ? 'active' : ''}`}
-          >
-            <Tv size={15} />
-            <span>TV Shows</span>
-            {tmdbCounts && (
-              <span style={{ opacity: 0.7, fontSize: '10px' }}>
-                ({tmdbCounts.tv.toLocaleString()})
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setMainTab('anime')}
-            className={`mode-btn ${mainTab === 'anime' ? 'active' : ''}`}
-          >
-            <Flame size={15} />
-            <span>Anime</span>
-          </button>
-          <button
-            onClick={() => setMainTab('comics')}
-            className={`mode-btn ${mainTab === 'comics' ? 'active' : ''}`}
-          >
-            <BookOpen size={15} />
-            <span>Comics</span>
-          </button>
-          <button
-            onClick={() => setMainTab('cartoons')}
-            className={`mode-btn ${mainTab === 'cartoons' ? 'active' : ''}`}
-          >
-            <Smile size={15} />
-            <span>Cartoons</span>
-          </button>
-        </div>
+          />
+          <GameBox3DModal
+            game={inspecting3DGame}
+            isOpen={Boolean(inspecting3DGame)}
+            onClose={() => setInspecting3DGame(null)}
+          />
+          <SettingsModal
+            isOpen={showSettingsModal}
+            onClose={() => setShowSettingsModal(false)}
+            onNavigateSection={(tab) => handleSelectMainTab(tab)}
+          />
+        </>
+      ) : isGamOnl ? (
+        <>
+          <GamOnlView
+            games={games}
+            paginatedGames={paginatedGames}
+            filteredCount={filteredGames.length}
+            loading={loading}
+            consoleTabs={consoleTabs}
+            selectedConsole={selectedConsole}
+            onSelectConsole={setSelectedConsole}
+            selectedGenre={selectedGenre}
+            onSelectGenre={setSelectedGenre}
+            genres={genres}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            favorites={favorites}
+            onToggleFavorite={toggleFavorite}
+            onLaunchGame={handleLaunchGame}
+            onInspect3D={(game) => {
+              setInspecting3DGame(game);
+              enrichGameWithLaunchBoxApi(game, (updated) => {
+                setInspecting3DGame(updated);
+                setGames(prev => prev.map(g => g.id === updated.id ? { ...g, ...updated } : g));
+              });
+            }}
+            onOpenSettings={() => setShowSettingsModal(true)}
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={setCurrentPage}
+          />
+          <GameBox3DModal
+            game={inspecting3DGame}
+            isOpen={Boolean(inspecting3DGame)}
+            onClose={() => setInspecting3DGame(null)}
+          />
+          <SettingsModal
+            isOpen={showSettingsModal}
+            onClose={() => setShowSettingsModal(false)}
+            onNavigateSection={(tab) => handleSelectMainTab(tab)}
+          />
+        </>
+      ) : (
+        <>
+      {/* Topbar: Adaptive between Obsidian, Netflix & WebPlay Time (Popcorn Time) */}
+      {isPopcorn ? (
+        <header className="topbar-popcorn">
+          <div className="relative max-w-[1440px] mx-auto px-3 sm:px-5 py-1.5 sm:py-0 sm:h-16 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-2 gap-y-1">
+            {/* Mobile (<sm) Row 1 Left: WEBPLAY time Wordmark */}
+            <button
+              type="button"
+              onClick={() => handleSelectMainTab('movies')}
+              className="flex sm:hidden order-1 cursor-pointer shrink-0 py-0.5"
+              aria-label="WebPlay Time Home"
+            >
+              <WebPlayTimeLogo size="sm" />
+            </button>
 
-        {/* HERO SECTION */}
-        {mainTab === 'games' ? (
-          <FeaturedHeroBanner games={games} onLaunchGame={handleLaunchGame} />
-        ) : mainTab === 'comics' || mainTab === 'movies' || mainTab === 'tv' ? null : (
-          <section className="hero-panel">
-            <div className="hero-copy">
-              <span className="section-kicker">
-                {mainTab === 'cartoons' ? '🧸 Toonix Animation Network' : '✦ Stream X Entertainment'}
-              </span>
-              <h2>
-                {mainTab === 'cartoons'
-                  ? <>Non-Stop Cartoons & Anime, <em>Ad-Shield Protected</em></>
-                  : <>Stream Movies, TV & Anime, <em>Zero Popups</em></>}
-              </h2>
-              <p>
-                Integrated with <strong>Stream X</strong> (<a href={STREAM_X_BASE_URL} target="_blank" rel="noreferrer" className="text-purple-400 underline">streamex.hn</a>) and <strong>Toonix</strong> (<a href={TOONIX_BASE_URL} target="_blank" rel="noreferrer" className="text-amber-400 underline">toonix.bond</a>). All external popups, tab redirects, and deceptive ad overlays are neutralized while Google AdSense monetization is preserved.
-              </p>
+            {/* Icon Category Strip (Row 1 Left on sm+, Row 2 full-width on mobile <sm) */}
+            <nav
+              aria-label="WebPlay Time sections"
+              className="order-3 sm:order-1 w-full sm:w-auto flex items-center justify-between sm:justify-start gap-2 sm:gap-4 overflow-x-auto border-t border-white/10 sm:border-t-0 pt-1.5 pb-0.5 sm:py-1"
+              style={{ scrollbarWidth: 'none' }}
+            >
+              {[
+                { key: 'games' as const, label: 'Games', renderIcon: (a: boolean) => <Gamepad2 size={20} className={a ? 'popcorn-nav-glow' : 'text-neutral-300'} /> },
+                { key: 'movies' as const, label: 'Movies', renderIcon: (a: boolean) => <PopcornClapperIcon active={a} /> },
+                { key: 'tv' as const, label: 'TV shows', renderIcon: (a: boolean) => <PopcornRetroTvIcon active={a} /> },
+                { key: 'anime' as const, label: 'Anime', renderIcon: (a: boolean) => <Flame size={20} className={a ? 'popcorn-nav-glow' : 'text-neutral-300'} /> },
+                { key: 'cartoons' as const, label: 'Cartoons', renderIcon: (a: boolean) => <Smile size={20} className={a ? 'popcorn-nav-glow' : 'text-neutral-300'} /> },
+                { key: 'nostalgia' as const, label: 'Nostalgia TV', renderIcon: (a: boolean) => <Radio size={20} className={a ? 'popcorn-nav-glow' : 'text-neutral-300'} /> },
+                { key: 'comics' as const, label: 'Comics', renderIcon: (a: boolean) => <BookOpen size={20} className={a ? 'popcorn-nav-glow' : 'text-neutral-300'} /> },
+              ].map((item) => {
+                const isActive = !showNetflixMyList && mainTab === item.key;
+                return (
+                  <button
+                    key={`pt-nav-${item.key}`}
+                    type="button"
+                    onClick={() => handleSelectMainTab(item.key)}
+                    className={`flex flex-col items-center justify-center gap-0.5 px-1.5 py-0.5 sm:py-1 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                      isActive ? 'text-white' : 'text-neutral-400 hover:text-neutral-100'
+                    }`}
+                  >
+                    {item.renderIcon(isActive)}
+                    <span className={`text-[10px] leading-none ${isActive ? 'font-bold text-white' : 'font-medium'}`}>
+                      {item.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Desktop Center Signature Wordmark: WEBPLAY time */}
+            <div className="hidden xl:flex xl:absolute xl:left-1/2 xl:-translate-x-1/2 pointer-events-auto">
+              <button
+                type="button"
+                onClick={() => handleSelectMainTab('movies')}
+                className="cursor-pointer"
+                aria-label="WebPlay Time Home"
+              >
+                <WebPlayTimeLogo size="md" />
+              </button>
             </div>
-          </section>
-        )}
+            <button
+              type="button"
+              onClick={() => handleSelectMainTab('movies')}
+              className="hidden sm:flex xl:hidden sm:order-2 cursor-pointer shrink-0"
+              aria-label="WebPlay Time Home"
+            >
+              <WebPlayTimeLogo size="sm" />
+            </button>
 
-        {/* Compliant Google AdSense Monetization Banner */}
-        {mainTab !== 'movies' && mainTab !== 'tv' && (
-          <div className="my-4">
-            <AdSenseBanner slotId="streamx-top-catalog-banner" format="horizontal" />
+            {/* Right Utility Controls: Search, Favorites Heart, 3-Theme Switcher */}
+            <div className="order-2 sm:order-3 flex items-center gap-1 sm:gap-2.5 shrink-0">
+              {mainTab !== 'comics' && (
+                showPopcornSearch || searchQuery ? (
+                  <div className="flex items-center gap-1 px-1.5 py-0.5 bg-[#0b0d14]/95 border border-[#3fa9f5]/70 rounded-[4px] w-24 sm:w-52">
+                    <Search size={12} className="text-[#62bfff] shrink-0" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search..."
+                      className="w-full bg-transparent text-xs text-white outline-none placeholder:text-neutral-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setShowPopcornSearch(false);
+                      }}
+                      aria-label="Close search"
+                      className="text-neutral-400 hover:text-white cursor-pointer"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowPopcornSearch(true)}
+                    aria-label="Search catalog"
+                    title="Search"
+                    className="p-1 text-neutral-300 hover:text-white cursor-pointer"
+                  >
+                    <Search size={15} />
+                  </button>
+                )
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (mainTab === 'games') {
+                    setSelectedConsole((prev) => (prev === 'Favorites' ? 'All' : 'Favorites'));
+                  } else {
+                    setShowNetflixMyList((v) => !v);
+                  }
+                }}
+                aria-label="Favorites"
+                title="Favorites"
+                className={`p-1 cursor-pointer transition-colors ${
+                  showNetflixMyList || (mainTab === 'games' && selectedConsole === 'Favorites')
+                    ? 'text-[#3fa9f5]'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Heart
+                  size={15}
+                  className={
+                    showNetflixMyList || (mainTab === 'games' && selectedConsole === 'Favorites')
+                      ? 'fill-current'
+                      : ''
+                  }
+                />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(true)}
+                aria-label="Open settings"
+                title="Settings & Themes"
+                data-settings-trigger="true"
+                className="p-1.5 text-neutral-300 hover:text-white cursor-pointer transition-colors"
+              >
+                <Settings size={16} />
+              </button>
+            </div>
           </div>
-        )}
+        </header>
+      ) : isNetflix ? (
+        <header className="topbar-sticky-netflix border-b border-[#222222]">
+          <div className="max-w-[1360px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-6">
+            {/* Zone 1 & 2: Netflix Brand Wordmark + Concise Single-Line Nav Links */}
+            <div className="flex items-center gap-6 lg:gap-8 min-w-0">
+              <button
+                type="button"
+                onClick={() => handleSelectMainTab('movies')}
+                className="font-netflix-display text-2xl sm:text-3xl tracking-wider text-[#E50914] whitespace-nowrap shrink-0 cursor-pointer select-none"
+              >
+                STREAMFLIX
+              </button>
 
-        {/* Global Console Tabs Filter (Only visible in Games mode) */}
-        {mainTab === 'games' && (
-          <div className="filter-tabs">
-            {consoleTabs.map(tab => {
-              const count = tab === 'All' ? games.length : games.filter(g => g.consoleType === tab).length;
+              <nav
+                aria-label="Primary sections"
+                className="hidden lg:flex items-center gap-5 text-xs font-medium text-neutral-300"
+              >
+                {navTabs.map((t) => {
+                  const isActive = !showNetflixMyList && mainTab === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => handleSelectMainTab(t.key)}
+                      className={`whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                        isActive
+                          ? 'text-white font-extrabold'
+                          : 'text-neutral-300 hover:text-white'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setShowNetflixMyList(true)}
+                  className={`whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                    showNetflixMyList
+                      ? 'text-white font-extrabold'
+                      : 'text-neutral-300 hover:text-white'
+                  }`}
+                >
+                  My List{myList.length > 0 ? ` (${myList.length})` : ''}
+                </button>
+              </nav>
+            </div>
+
+            {/* Zone 3: Interactive Search, Theme Switcher & Netflix Profile Menu */}
+            <div className="flex items-center gap-3 shrink-0">
+              {mainTab !== 'comics' && (
+                showNetflixSearch || searchQuery ? (
+                  <div className="flex items-center gap-2 px-2.5 py-1.5 bg-black/90 border border-white/60 rounded-[4px] w-44 sm:w-60">
+                    <Search size={14} className="text-white shrink-0" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Titles, genres, IDs..."
+                      className="w-full bg-transparent text-xs text-white outline-none placeholder:text-neutral-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setShowNetflixSearch(false);
+                      }}
+                      aria-label="Close search"
+                      className="text-neutral-400 hover:text-white cursor-pointer"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowNetflixSearch(true)}
+                    aria-label="Search catalog"
+                    className="p-2 text-neutral-200 hover:text-white cursor-pointer"
+                  >
+                    <Search size={18} />
+                  </button>
+                )
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(true)}
+                aria-label="Open settings"
+                title="Settings & Themes"
+                data-settings-trigger="true"
+                className="p-2 text-neutral-200 hover:text-white cursor-pointer transition-colors"
+              >
+                <Settings size={18} />
+              </button>
+
+              {/* Netflix Profile Switcher */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileMenu((v) => !v)}
+                  aria-label="Switch Netflix profile"
+                  className="inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <NetflixProfileAvatar profile={netflixProfile} size={28} />
+                  <ChevronDown size={14} className="text-neutral-300" />
+                </button>
+
+                {showProfileMenu && (
+                  <div className="absolute right-0 mt-2 w-44 rounded-md bg-[#181818] border border-[#333333] shadow-2xl py-1.5 z-50">
+                    {(['Main', 'Kids', 'Anime'] as NetflixProfile[]).map((prof) => (
+                      <button
+                        key={prof}
+                        type="button"
+                        onClick={() => {
+                          setNetflixProfile(prof);
+                          setShowProfileMenu(false);
+                          if (prof === 'Kids') handleSelectMainTab('cartoons');
+                          else if (prof === 'Anime') handleSelectMainTab('anime');
+                        }}
+                        className="w-full px-3 py-2 flex items-center justify-between gap-2 hover:bg-[#262626] text-left text-xs text-white cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <NetflixProfileAvatar profile={prof} size={22} />
+                          <span className="font-semibold">{prof}</span>
+                        </span>
+                        {netflixProfile === prof && <Check size={13} className="text-[#E50914]" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Mobile Single-Row Scrollable Nav Fallback */}
+          <div className="lg:hidden px-4 pb-2.5 flex items-center gap-3 overflow-x-auto text-xs" style={{ scrollbarWidth: 'none' }}>
+            {navTabs.map((t) => {
+              const isActive = !showNetflixMyList && mainTab === t.key;
               return (
                 <button
-                  key={tab}
-                  onClick={() => setSelectedConsole(tab)}
-                  className={`filter-tab ${selectedConsole === tab ? 'active' : ''}`}
+                  key={`m-${t.key}`}
+                  type="button"
+                  onClick={() => handleSelectMainTab(t.key)}
+                  className={`whitespace-nowrap shrink-0 px-2.5 py-1 rounded-[4px] cursor-pointer ${
+                    isActive ? 'bg-[#E50914] text-white font-bold' : 'text-neutral-300'
+                  }`}
                 >
-                  <span>{tab}</span>
-                  <span style={{ opacity: 0.7, fontSize: '10px' }}>({count} / verified)</span>
+                  {t.label}
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={() => setShowNetflixMyList(true)}
+              className={`whitespace-nowrap shrink-0 px-2.5 py-1 rounded-[4px] cursor-pointer ${
+                showNetflixMyList ? 'bg-[#E50914] text-white font-bold' : 'text-neutral-300'
+              }`}
+            >
+              My List
+            </button>
+          </div>
+        </header>
+      ) : (
+        <header className="topbar">
+          <div className="brand-lockup">
+            <span className="eyebrow">
+              <span>STREAM X</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowSettingsModal(true)}
+              aria-label="Open settings"
+              title="Settings & Themes"
+              data-settings-trigger="true"
+              className="p-2 rounded-xl bg-[#141418] border border-[#27272e] text-neutral-300 hover:text-white hover:border-[#3e3e4a] cursor-pointer transition-colors"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
+        </header>
+      )}
+
+      {/* Main Container (Full-bleed wall starting at y=0 behind floating header on sm+) */}
+      <main className={isPopcorn ? '!max-w-full !px-0 !mx-0' : ''}>
+        {/* Obsidian Mode Navigation Pills (Cartoons placed immediately next to Anime) */}
+        {!isNetflix && !isPopcorn && !isGamOnl && (
+          <div className="streamx-modes pt-4">
+            {navTabs.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => handleSelectMainTab(t.key)}
+                className={`mode-btn ${mainTab === t.key ? 'active' : ''}`}
+              >
+                {t.icon}
+                <span>{t.label}</span>
+                {t.badge && (
+                  <span style={{ opacity: 0.72, fontSize: '10px' }}>({t.badge})</span>
+                )}
+              </button>
+            ))}
           </div>
         )}
 
-        {/* Library Toolbar */}
-        <div className="library-toolbar">
-          <div className="toolbar-title">
-            <span className="status-line"></span>
-            <span>
-              {mainTab === 'games'
-                ? 'Game Collection'
-                : mainTab === 'comics'
-                ? 'Comic Vault'
-                : mainTab === 'movies'
-                ? 'Movies & Cinema Catalog'
-                : mainTab === 'tv'
-                ? 'TV Shows & Series Catalog'
-                : `${mainTab.toUpperCase()} Stream Library`}
-            </span>
-            <span className="result-count">
-              {mainTab === 'games'
-                ? `(${filteredGames.length} titles in ${selectedConsole})`
-                : mainTab === 'comics'
-                ? '(BatCave.biz Archive Edition)'
-                : mainTab === 'movies'
-                ? tmdbCounts
-                  ? `(${tmdbCounts.movies.toLocaleString()} movies · Live TMDB v3)`
-                  : '(Live TMDB v3 Catalog)'
-                : mainTab === 'tv'
-                ? tmdbCounts
-                  ? `(${tmdbCounts.tv.toLocaleString()} TV shows · Live TMDB v3)`
-                  : '(Live TMDB v3 Catalog)'
-                : `(${filteredStreamingItems.length} streams available)`}
-            </span>
-          </div>
+        {/* HERO SECTION FOR RETRO GAMES (Hidden in Popcorn Time & GAM.ONL modes) */}
+        {!isPopcorn && !isGamOnl && mainTab === 'games' && !showNetflixMyList && (
+          <FeaturedHeroBanner
+            games={games}
+            onLaunchGame={handleLaunchGame}
+            onInspect3D={(game) => {
+              setInspecting3DGame(game);
+              enrichGameWithLaunchBoxApi(game, (updated) => {
+                setInspecting3DGame(updated);
+                setGames(prev => prev.map(g => g.id === updated.id ? { ...g, ...updated } : g));
+              });
+            }}
+          />
+        )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {mainTab === 'games' && (
-              <select
-                value={selectedGenre}
-                onChange={e => setSelectedGenre(e.target.value)}
-                style={{
-                  padding: '8px 12px',
-                  border: '1px solid #1e293b',
-                  borderRadius: '9px',
-                  background: '#0a0e17',
-                  color: '#c0c0ce',
-                  fontSize: '11px',
-                  outline: 'none',
-                }}
-              >
-                {genres.map(g => (
-                  <option key={g} value={g}>
-                    Genre: {g}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {/* Search Box */}
-            <div className="search-box">
-              <Search size={14} />
-              <input
-                type="text"
-                placeholder={
-                  mainTab === 'games'
-                    ? "Instant search by title, console..."
-                    : mainTab === 'comics'
-                    ? "Search comics, publishers, creators..."
-                    : mainTab === 'movies'
-                    ? "Search movies by title or TMDB ID..."
-                    : mainTab === 'tv'
-                    ? "Search TV shows by title or TMDB ID..."
-                    : "Search anime, cartoons, streams..."
-                }
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery('')} title="Clear search">
-                  <X size={14} />
-                </button>
-              )}
+        {/* Global Console Tabs Filter (Only visible in Games mode, handled inside GamOnlView for GAM.ONL) */}
+        {!isGamOnl && mainTab === 'games' && !showNetflixMyList && (
+          <div className={isPopcorn ? 'sm:pt-16 px-4 py-2.5 bg-[#0a0c12]/95 border-b border-white/10' : ''}>
+            <div className={`filter-tabs ${isPopcorn ? '!mb-0 !pb-0' : ''}`}>
+              {consoleTabs.map(tab => {
+                const count = tab === 'All' ? games.length : games.filter(g => g.consoleType === tab).length;
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setSelectedConsole(tab)}
+                    className={`filter-tab ${selectedConsole === tab ? 'active' : ''}`}
+                  >
+                    <span>{tab}</span>
+                    <span style={{ opacity: 0.7, fontSize: '10px' }}>({count})</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
-        </div>
+        )}
 
-        {/* PSP Coming Soon Splash Card */}
-        {mainTab === 'games' && selectedConsole === 'PSP' && (
-          <div className="my-6 p-6 rounded-2xl bg-gradient-to-r from-blue-950/90 via-[#0a1228] to-purple-950/90 border border-blue-500/40 shadow-2xl space-y-4">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-blue-500/30 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-3 bg-blue-600/20 border border-blue-400/40 rounded-xl text-blue-400">
-                  <Gamepad2 size={28} />
-                </div>
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">Status: Coming Soon ⚡</span>
-                  <h3 className="text-xl font-extrabold text-white">PlayStation Portable (PSP) WebAssembly</h3>
-                  <p className="text-xs text-blue-200/80">Full high-performance PPSSPP WebAssembly engine integration is currently in preview testing.</p>
-                </div>
-              </div>
-              <span className="px-3.5 py-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full text-xs font-bold shrink-0">
-                Launch Target: Q2 2026
+        {/* Library Toolbar (Hidden in Popcorn Time wall, GAM.ONL Games hub, Nostalgia TV, Comics Coming Soon, or My List) */}
+        {!isPopcorn && !(isGamOnl && mainTab === 'games') && mainTab !== 'comics' && mainTab !== 'nostalgia' && !showNetflixMyList && (
+          <div className={`library-toolbar ${isNetflix ? 'pt-5' : ''}`}>
+            <div className="toolbar-title">
+              <span className="status-line"></span>
+              <span className="font-bold">
+                {mainTab === 'games'
+                  ? 'Game Collection'
+                  : mainTab === 'movies'
+                  ? 'Movies & Cinema Catalog'
+                  : mainTab === 'tv'
+                  ? 'TV Shows & Series Catalog'
+                  : mainTab === 'anime'
+                  ? 'Anime Series & Films'
+                  : 'Cartoons & Animation'}
+              </span>
+              <span className="result-count tabular-nums">
+                {mainTab === 'games'
+                  ? `(${filteredGames.length} titles in ${selectedConsole})`
+                  : mainTab === 'movies'
+                  ? tmdbCounts
+                    ? `(${tmdbCounts.movies.toLocaleString()} movies · Live TMDB v3)`
+                    : '(Live TMDB v3 Catalog)'
+                  : mainTab === 'tv'
+                  ? tmdbCounts
+                    ? `(${tmdbCounts.tv.toLocaleString()} TV shows · Live TMDB v3)`
+                    : '(Live TMDB v3 Catalog)'
+                  : '(Live TMDB Animation Catalog)'}
               </span>
             </div>
 
-            {/* PSP Sample Boxart Preview Cards Grid */}
-            <div className="space-y-2">
-              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Preview Catalog Artwork (Libretro CDN)</h4>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                {[
-                  { title: "God of War: Chains of Olympus", file: "God of War - Chains of Olympus (USA).png" },
-                  { title: "Crisis Core: Final Fantasy VII", file: "Crisis Core - Final Fantasy VII (USA).png" },
-                  { title: "Grand Theft Auto: Liberty City Stories", file: "Grand Theft Auto - Liberty City Stories (USA).png" },
-                  { title: "Monster Hunter Freedom Unite", file: "Monster Hunter Freedom Unite (USA).png" },
-                  { title: "Tekken 6", file: "Tekken 6 (USA).png" },
-                  { title: "Kingdom Hearts: Birth by Sleep", file: "Kingdom Hearts - Birth by Sleep (USA).png" }
-                ].map(item => (
-                  <div key={item.title} className="bg-blue-950/40 border border-blue-800/40 rounded-xl p-2 text-center space-y-1.5 group hover:border-blue-400 transition-all">
-                    <div className="aspect-[3/4] rounded-lg overflow-hidden bg-black/60 relative">
-                      <img
-                        src={`https://raw.githubusercontent.com/libretro-thumbnails/Sony_-_PlayStation_Portable/master/Named_Boxarts/${encodeURIComponent(item.file)}`}
-                        alt={item.title}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                        onError={(e) => handlePosterImageError(e, item.title, 'PSP')}
-                      />
-                      <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider bg-amber-950/90 text-amber-300 border border-amber-500/50 rounded">
-                        Coming Soon
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-bold text-slate-200 line-clamp-1 block">{item.title}</span>
-                  </div>
-                ))}
+            <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap w-full sm:w-auto">
+              {mainTab === 'games' && (
+                <select
+                  aria-label="Filter games by genre"
+                  value={selectedGenre}
+                  onChange={e => setSelectedGenre(e.target.value)}
+                  className="px-3 py-2 rounded-lg border border-[#27272e] bg-[#141418] text-xs font-semibold text-neutral-200 outline-none cursor-pointer"
+                >
+                  {genres.map(g => (
+                    <option key={g} value={g}>
+                      Genre: {g}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {/* Search Box */}
+              <div className="search-box flex-1 sm:flex-initial">
+                <Search size={14} className="shrink-0" />
+                <input
+                  type="text"
+                  placeholder={
+                    mainTab === 'games'
+                      ? 'Search games or console...'
+                      : mainTab === 'movies'
+                      ? 'Search movies or TMDB ID...'
+                      : mainTab === 'tv'
+                      ? 'Search shows or TMDB ID...'
+                      : mainTab === 'anime'
+                      ? 'Search anime...'
+                      : 'Search cartoons...'
+                  }
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button type="button" onClick={() => setSearchQuery('')} title="Clear search">
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* CONTENT RENDER: COMICS VAULT, MOVIES PLAYER, STREAMING CATALOG, OR GAMES GRID */}
-        {mainTab === 'comics' ? (
-          <ComicsSection searchQuery={searchQuery} />
-        ) : mainTab === 'movies' || mainTab === 'tv' ? (
+        {/* CONTENT RENDER: NOSTALGIA TV, COMICS COMING SOON, CINEMA DISCOVERY (MOVIES/TV/ANIME/CARTOONS/MY LIST), OR RETRO GAMES */}
+        {mainTab === 'nostalgia' && !showNetflixMyList ? (
+          <div className={isPopcorn ? 'sm:pt-16 pb-12' : 'pt-2 pb-12'}>
+            <NostalgiaTvView externalSearch={searchQuery} />
+          </div>
+        ) : mainTab === 'comics' && !showNetflixMyList ? (
+          <div className={isPopcorn ? 'max-w-[1200px] mx-auto px-4 sm:px-6 sm:pt-24 pt-6 pb-16' : 'pt-4 pb-16'}>
+            <ComicsComingSoon onExploreTab={(tab) => handleSelectMainTab(tab)} />
+          </div>
+        ) : isCinemaDiscoverTab ? (
           <MoviesSection
-            key={mainTab}
-            mode={mainTab === 'tv' ? 'tv' : 'movies'}
+            key={showNetflixMyList ? 'mylist' : mainTab}
+            mode={
+              mainTab === 'tv'
+                ? 'tv'
+                : mainTab === 'anime'
+                ? 'anime'
+                : mainTab === 'cartoons'
+                ? 'cartoons'
+                : 'movies'
+            }
             searchQuery={searchQuery}
             onClearSearch={() => setSearchQuery('')}
-            savedState={moviesCatalogMemoryRef.current[mainTab === 'tv' ? 'tv' : 'movies'] || null}
+            showMyListOnly={showNetflixMyList}
+            onCloseMyList={() => setShowNetflixMyList(false)}
+            savedState={
+              mainTab === 'movies' || mainTab === 'tv'
+                ? moviesCatalogMemoryRef.current[mainTab] || null
+                : null
+            }
             onStateChange={(state) => {
-              moviesCatalogMemoryRef.current[mainTab === 'tv' ? 'tv' : 'movies'] = state;
+              if (mainTab === 'movies' || mainTab === 'tv') {
+                moviesCatalogMemoryRef.current[mainTab] = state;
+              }
             }}
             onSelectMedia={(target) => {
               setActiveMovieTarget(target);
               setCurrentView('movie_player');
             }}
           />
-        ) : mainTab !== 'games' ? (
-          <div className="game-grid">
-            {filteredStreamingItems.map((media) => (
-              <div key={media.id} className="game-card">
-                {/* Poster Art (Click opens StreamPlayer) */}
-                <div
-                  className="card-art"
-                  role="button"
-                  tabIndex={0}
-                  style={{ height: '200px', cursor: 'pointer' }}
-                  onClick={() => {
-                    setActiveStreamItem(media);
-                    setCurrentView('stream_player');
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setActiveStreamItem(media);
-                      setCurrentView('stream_player');
-                    }
-                  }}
-                  title={`Watch ${media.title} in Player`}
-                >
-                  <img
-                    src={media.poster}
-                    alt={media.title}
-                    referrerPolicy="no-referrer"
-                    onError={(e) => handlePosterImageError(e, media.title, media.category)}
-                    className="card-art-img"
-                    style={{ opacity: 0.78 }}
-                  />
-                  <span className="genre-badge">{media.genre}</span>
-                  {media.quality && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        right: '12px',
-                        top: '12px',
-                        zIndex: 2,
-                        padding: '3px 8px',
-                        borderRadius: '6px',
-                        fontSize: '10px',
-                        fontWeight: 900,
-                        background: '#0284c7',
-                        color: '#fff',
-                        letterSpacing: '0.04em'
-                      }}
-                    >
-                      {media.quality}
-                    </span>
-                  )}
-                </div>
-
-                {/* Metadata Badges */}
-                <div className="card-metadata-badges">
-                  <span className={`meta-badge ${media.source === 'Toonix' ? 'bg-amber-950/40 text-amber-300 border-amber-700/40' : 'console'}`}>
-                    <Tv size={10} />
-                    {media.source}
-                  </span>
-                  <span className="meta-badge year">
-                    <Calendar size={10} />
-                    {media.year}
-                  </span>
-                  <span className="meta-badge rating">
-                    <Star size={10} fill="currentColor" />
-                    IMDb {media.rating.toFixed(1)}/10
-                  </span>
-                </div>
-
-                {/* Card Body */}
-                <div className="card-body">
-                  <div className="card-info">
-                    <h3 title={media.title}>{media.title}</h3>
-                    <p title={media.synopsis}>{media.synopsis}</p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
-                    <button
-                      className="play-btn-card"
-                      style={{ flex: 1 }}
-                      onClick={() => {
-                        setActiveStreamItem(media);
-                        setCurrentView('stream_player');
-                      }}
-                    >
-                      <Play size={12} fill="currentColor" />
-                      <span>Watch Stream</span>
-                    </button>
-                    <a
-                      href={media.streamUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="play-btn-card"
-                      style={{ background: '#141c2e', borderColor: '#223049', color: '#38bdf8', padding: '0 10px' }}
-                      title="Direct link to source provider"
-                    >
-                      <ExternalLink size={12} />
-                    </a>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+        ) : isGamOnl ? (
+          <GamOnlView
+            games={games}
+            paginatedGames={paginatedGames}
+            filteredCount={filteredGames.length}
+            loading={loading}
+            consoleTabs={consoleTabs}
+            selectedConsole={selectedConsole}
+            onSelectConsole={setSelectedConsole}
+            selectedGenre={selectedGenre}
+            onSelectGenre={setSelectedGenre}
+            genres={genres}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            favorites={favorites}
+            onToggleFavorite={toggleFavorite}
+            onLaunchGame={handleLaunchGame}
+            onInspect3D={(game) => {
+              setInspecting3DGame(game);
+              enrichGameWithLaunchBoxApi(game, (updated) => {
+                setInspecting3DGame(updated);
+                setGames(prev => prev.map(g => g.id === updated.id ? { ...g, ...updated } : g));
+              });
+            }}
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={setCurrentPage}
+          />
         ) : (
-          /* Game Grid */
+          /* Retro Games Grid: Stuck-together edge-to-edge wall in Popcorn Time mode, or cards in Obsidian/Netflix */
           loading ? (
             <div className="empty-state">
               <div className="loader"></div>
-              <p>Loading 1,800+ community-verified games...</p>
+              <p>Loading retro games catalog...</p>
             </div>
           ) : filteredGames.length === 0 ? (
             <div className="empty-state">
-              <Gamepad2 size={36} color="#0284c7" />
+              <Gamepad2 size={36} className="text-neutral-400" />
               <h3>No games found</h3>
               <p>Try switching console categories or clearing your search term.</p>
             </div>
+          ) : isPopcorn ? (
+            <div
+              className={`grid gap-0 w-full ${
+                settings.posterDensity === 'compact'
+                  ? 'grid-cols-4 sm:grid-cols-6 md:grid-cols-9 lg:grid-cols-11'
+                  : settings.posterDensity === 'large'
+                  ? 'grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7'
+                  : 'grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9'
+              }`}
+            >
+              {paginatedGames.map((game, index) => {
+                const isFav = favorites.includes(game.id || game.slug);
+                const starCount = Math.round(Math.min(5, Math.max(1, (Number(game.rating || 8.6)) / 2)));
+                return (
+                  <article
+                    key={`pt-game-${game.slug}-${index}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setPopcornGameDetail(game)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setPopcornGameDetail(game);
+                      }
+                    }}
+                    className="group relative aspect-[2/3] w-full overflow-hidden bg-[#10131c] cursor-pointer select-none"
+                  >
+                    <SafeGameImage
+                      primaryUrl={game.poster || game.posterUrl || game.coverUrl}
+                      fallbackUrl={game.consoleType === 'PS1' ? game.boxFront : (game.boxFront || game.boxFrontUrl)}
+                      title={game.title}
+                      consoleType={game.consoleType}
+                      alt={game.title}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    />
+                    <ConsoleBoxOverlay
+                      consoleType={game.consoleType}
+                      mode={settings.posterLabelMode}
+                      compact={settings.posterDensity === 'compact'}
+                    />
+                    <div className="absolute inset-0 z-[6] bg-[#0b0e17]/84 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex flex-col items-center justify-between p-3 text-center">
+                      <div className="w-full space-y-2 pt-2">
+                        <h3 className="text-[11px] sm:text-xs font-extrabold uppercase tracking-wide text-white line-clamp-2 leading-snug">
+                          {game.title}
+                        </h3>
+                        {settings.showCardMetadata && (
+                          <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-neutral-300">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleFavorite(game.id || game.slug);
+                              }}
+                              aria-label={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                              className={isFav ? 'text-[#3fa9f5]' : 'text-neutral-200 hover:text-white'}
+                            >
+                              <Heart size={13} className={isFav ? 'fill-current' : ''} />
+                            </button>
+                            <span>{game.consoleType} · {game.year}</span>
+                          </div>
+                        )}
+                      </div>
+                      {settings.showCardMetadata && (
+                        <div className="flex items-center justify-center gap-1 pb-2">
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <Star
+                              key={n}
+                              size={12}
+                              className={
+                                n <= starCount
+                                  ? 'text-[#3fa9f5] fill-[#3fa9f5] drop-shadow-[0_0_6px_rgba(63,169,245,0.8)]'
+                                  : 'text-neutral-500'
+                              }
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
           ) : (
-            <div className="game-grid">
+            <div
+              className="game-grid"
+              style={
+                settings.posterDensity === 'compact'
+                  ? { gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '16px' }
+                  : settings.posterDensity === 'large'
+                  ? { gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '24px' }
+                  : undefined
+              }
+            >
               {paginatedGames.map((game, index) => {
                 const globalIndex = (currentPage - 1) * ITEMS_PER_PAGE + index;
                 return (
                   <div key={`${game.slug}-${index}`} className="game-card">
-                    {/* Poster Art with Number & Genre */}
-                    <div className="card-art">
+                    {/* Poster Art */}
+                    <div
+                      className="card-art cursor-pointer"
+                      onClick={() => handleLaunchGame(game)}
+                    >
                       <SafeGameImage
                         primaryUrl={game.poster || game.posterUrl || game.coverUrl}
-                        fallbackUrl={game.boxFront || game.boxFrontUrl}
+                        fallbackUrl={game.consoleType === 'PS1' ? game.boxFront : (game.boxFront || game.boxFrontUrl)}
                         title={game.title}
                         consoleType={game.consoleType}
                         alt={game.title}
                         className="card-art-img"
                       />
-                      <span className="genre-badge">{game.genre}</span>
-                      <span className="card-number">
-                        {String(globalIndex + 1).padStart(2, '0')}
-                      </span>
-                      {/* Favorite Star Button Overlay */}
+                      <ConsoleBoxOverlay
+                        consoleType={game.consoleType}
+                        mode={settings.posterLabelMode}
+                      />
+                      {settings.showCardMetadata && (
+                        <>
+                          <span
+                            className="genre-badge"
+                            style={
+                              settings.posterLabelMode === 'overlay'
+                                ? { top: 'auto', bottom: '10px', right: '10px', left: 'auto', zIndex: 5 }
+                                : undefined
+                            }
+                          >
+                            {game.genre}
+                          </span>
+                          <span className="card-number">
+                            {String(globalIndex + 1).padStart(2, '0')}
+                          </span>
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleFavorite(game.id || game.slug);
                         }}
-                        className={`absolute top-2 right-2 z-10 p-2 rounded-xl backdrop-blur-md transition-all cursor-pointer shadow-lg ${
+                        className={`absolute top-2 right-2 z-10 p-2 rounded-lg backdrop-blur-md transition-all cursor-pointer shadow-lg ${
                           favorites.includes(game.id || game.slug)
-                            ? 'bg-amber-500 text-black scale-110'
-                            : 'bg-black/60 text-white hover:bg-black/80 hover:scale-105'
+                            ? 'bg-amber-500 text-black'
+                            : 'bg-black/65 text-white hover:bg-black/85'
                         }`}
-                        title={favorites.includes(game.id || game.slug) ? "Remove from Favorites" : "Add to Favorites"}
+                        title={favorites.includes(game.id || game.slug) ? 'Remove from Favorites' : 'Add to Favorites'}
+                        aria-label={favorites.includes(game.id || game.slug) ? 'Remove from Favorites' : 'Add to Favorites'}
                       >
-                        <Star size={16} fill={favorites.includes(game.id || game.slug) ? "currentColor" : "none"} />
+                        <Star size={15} fill={favorites.includes(game.id || game.slug) ? 'currentColor' : 'none'} />
                       </button>
                     </div>
 
-                    {/* Metadata Badges immediately under poster image */}
-                    <div className="card-metadata-badges">
-                      <span className="meta-badge console">
-                        <Monitor size={10} />
-                        {game.consoleType}
-                      </span>
-                      <span className="meta-badge year">
-                        <Calendar size={10} />
-                        {game.year}
-                      </span>
-                      <span className="meta-badge rating">
-                        <Star size={10} fill="currentColor" />
-                        IMDb {game.rating.toFixed(1)}/10
-                      </span>
-                    </div>
+                    {/* Clean Unboxed Metadata Line (No pill sandwiches) */}
+                    {settings.showCardMetadata && (
+                      <div className="card-meta-line">
+                        <span className="text-neutral-200 font-bold">{game.consoleType}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{game.year}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="inline-flex items-center gap-1 text-white">
+                          <Star size={11} className="text-[#22c55e] fill-[#22c55e]" />
+                          {Number(game.rating || 9.0).toFixed(1)}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Card Body */}
                     <div className="card-body">
@@ -1417,15 +1869,18 @@ export default function App() {
                         <h3 title={game.title}>{game.title}</h3>
                         <p title={game.synopsis}>{game.synopsis}</p>
                       </div>
-                      <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
-                        <button className="play-btn-card" style={{ flex: 1 }} onClick={() => handleLaunchGame(game)}>
-                          <Play size={12} fill="currentColor" />
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          className="play-btn-card flex-1"
+                          onClick={() => handleLaunchGame(game)}
+                        >
+                          <Play size={13} fill="currentColor" />
                           <span>Play</span>
                         </button>
                         <button
                           type="button"
-                          className="play-btn-card"
-                          style={{ background: '#121828', borderColor: '#223049', color: '#38bdf8', padding: '0 8px', gap: '4px' }}
+                          className="secondary-btn-card"
                           onClick={(e) => {
                             e.stopPropagation();
                             setInspecting3DGame(game);
@@ -1448,8 +1903,8 @@ export default function App() {
           )
         )}
 
-        {/* Pagination (50 items per view page) */}
-        {mainTab === 'games' && filteredGames.length > ITEMS_PER_PAGE && (
+        {/* Pagination (50 items per view page, handled internally in GamOnlView) */}
+        {!isGamOnl && mainTab === 'games' && filteredGames.length > ITEMS_PER_PAGE && (
           <div className="pagination">
             <button
               onClick={() => {
@@ -1565,12 +2020,136 @@ export default function App() {
         </div>
       )}
 
+      {/* Popcorn Time Retro Game Detail View */}
+      {isPopcorn && popcornGameDetail && (
+        <div
+          className="fixed inset-0 z-50 bg-[#0b0d13] text-white overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label={popcornGameDetail.title}
+        >
+          <div
+            className="fixed inset-0 pointer-events-none opacity-25"
+            style={{
+              background: 'radial-gradient(circle at 25% 30%, rgba(63,169,245,0.22) 0%, rgba(8,10,15,0.96) 70%)',
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setPopcornGameDetail(null)}
+            aria-label="Back to catalog"
+            className="fixed top-4 right-5 z-50 w-9 h-9 rounded-full bg-white/15 hover:bg-white/30 text-white grid place-items-center backdrop-blur-md border border-white/15 cursor-pointer shadow-lg"
+          >
+            <X size={18} strokeWidth={2.5} />
+          </button>
+
+          <div className="relative z-10 min-h-screen max-w-[1200px] mx-auto px-5 sm:px-10 py-16 flex items-center">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center w-full">
+              <div className="lg:col-span-5 flex justify-center">
+                <div className="relative w-full max-w-[330px] aspect-[2/3] overflow-hidden shadow-[0_24px_70px_rgba(0,0,0,0.85)] border border-white/10 bg-[#10141f]">
+                  <SafeGameImage
+                    primaryUrl={popcornGameDetail.poster || popcornGameDetail.posterUrl || popcornGameDetail.coverUrl}
+                    fallbackUrl={popcornGameDetail.consoleType === 'PS1' ? popcornGameDetail.boxFront : (popcornGameDetail.boxFront || popcornGameDetail.boxFrontUrl)}
+                    title={popcornGameDetail.title}
+                    consoleType={popcornGameDetail.consoleType}
+                    alt={popcornGameDetail.title}
+                    className="w-full h-full object-cover"
+                  />
+                  <ConsoleBoxOverlay
+                    consoleType={popcornGameDetail.consoleType}
+                    mode={settings.posterLabelMode}
+                  />
+                </div>
+              </div>
+
+              <div className="lg:col-span-7 space-y-5">
+                <h1 className="font-popcorn-brand text-3xl sm:text-5xl font-black uppercase tracking-tight text-white leading-tight">
+                  {popcornGameDetail.title}
+                </h1>
+                <div className="flex flex-wrap items-center gap-4 text-xs sm:text-sm text-neutral-200 tabular-nums">
+                  <span>{popcornGameDetail.genre || 'Arcade'}</span>
+                  <span className="inline-flex items-center gap-1.5 text-neutral-300">
+                    <Gamepad2 size={14} className="text-[#3fa9f5]" />
+                    <span>{popcornGameDetail.consoleType}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-neutral-300">
+                    <Calendar size={14} className="text-[#3fa9f5]" />
+                    <span>{popcornGameDetail.year}</span>
+                  </span>
+                  <div className="inline-flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <Star
+                        key={n}
+                        size={14}
+                        className={
+                          n <= Math.round(Math.min(5, Math.max(1, Number(popcornGameDetail.rating || 8.8) / 2)))
+                            ? 'text-[#3fa9f5] fill-[#3fa9f5]'
+                            : 'text-neutral-500'
+                        }
+                      />
+                    ))}
+                    <span className="ml-1.5">( {Number(popcornGameDetail.rating || 9.0).toFixed(1)} )</span>
+                  </div>
+                </div>
+
+                <p className="text-sm sm:text-[15px] text-neutral-200/95 leading-relaxed max-w-2xl">
+                  {popcornGameDetail.synopsis || 'Play directly in your browser using WebAssembly retro emulation.'}
+                </p>
+
+                <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = popcornGameDetail;
+                      setPopcornGameDetail(null);
+                      handleLaunchGame(target);
+                    }}
+                    className="popcorn-watch-btn inline-flex items-center gap-3.5 px-6 py-3 rounded-[4px] cursor-pointer"
+                  >
+                    <span className="w-8 h-8 rounded-full bg-[#3fa9f5] text-white grid place-items-center shadow-[0_0_16px_rgba(63,169,245,0.9)]">
+                      <Play size={15} fill="currentColor" className="ml-0.5" />
+                    </span>
+                    <span className="font-popcorn-brand text-sm sm:text-base font-extrabold uppercase tracking-wider text-white">
+                      PLAY IT NOW
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInspecting3DGame(popcornGameDetail);
+                      enrichGameWithLaunchBoxApi(popcornGameDetail, (updated) => {
+                        setInspecting3DGame(updated);
+                        setGames(prev => prev.map(g => g.id === updated.id ? { ...g, ...updated } : g));
+                      });
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-3 rounded-[4px] bg-black/50 hover:bg-white/10 border border-white/25 text-xs font-bold text-white cursor-pointer"
+                  >
+                    <Box size={15} className="text-[#3fa9f5]" />
+                    <span>3D Box View</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Interactive 3D Box Engine Modal */}
       <GameBox3DModal
         game={inspecting3DGame}
         isOpen={Boolean(inspecting3DGame)}
         onClose={() => setInspecting3DGame(null)}
       />
+
+      {/* Global Studio Settings Modal */}
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        onNavigateSection={(tab) => handleSelectMainTab(tab)}
+      />
+        </>
+      )}
     </div>
   );
 }

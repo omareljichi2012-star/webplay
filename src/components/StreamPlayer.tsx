@@ -25,6 +25,7 @@ import { AdSenseBanner } from './AdSenseBanner';
 import { handlePosterImageError } from '../utils/posterFallback';
 import { ServerSwitcherGrid } from './ServerSwitcherGrid';
 import type { ServerFlagCode } from '../utils/movieServers';
+import { useTheme } from '../context/ThemeContext';
 
 interface StreamPlayerProps {
   item: MediaStreamItem;
@@ -41,6 +42,9 @@ export const SERVER_PROVIDERS: Array<{
   type: string;
 }> = [
   { id: 'streamex', name: 'StreamX Proxy', shortLabel: 'streamex', flag: 'us', featured: true, type: 'proxy' },
+  { id: 'framextv', name: 'FrameXTV', shortLabel: 'framextv', flag: 'us', featured: true, type: 'embed' },
+  { id: 'vidy', name: 'Vidy HD', shortLabel: 'vidy', flag: 'gb', type: 'embed' },
+  { id: 'bingr', name: 'Bingr', shortLabel: 'bingr', flag: 'us', type: 'embed' },
   { id: 'vidlink', name: 'VidLink (No Sandbox Block)', shortLabel: 'vidlink', flag: 'gb', type: 'embed' },
   { id: 'autoembed', name: 'AutoEmbed', shortLabel: 'autoembed', flag: 'us', type: 'fallback' },
   { id: 'vidsrc-cc', name: 'VidSrc Primary (v2)', shortLabel: 'vidsrc v2', flag: 'us', featured: true, type: 'vidsrc' },
@@ -57,6 +61,7 @@ export const SERVER_PROVIDERS: Array<{
 ];
 
 export const StreamPlayer: React.FC<StreamPlayerProps> = ({ item, onClose, onSelectOther }) => {
+  const { isNetflix } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -140,6 +145,21 @@ export const StreamPlayer: React.FC<StreamPlayerProps> = ({ item, onClose, onSel
       case 'framex':
         return `https://framex.vip/embed/${isMovie ? 'movie' : 'tv'}/${tmdbId}${isMovie ? '' : `/${season}/${episode}`}`;
 
+      case 'framextv':
+        return isMovie
+          ? `https://framextv.cc/embed/${tmdbId}?autoplay=1&muted=0`
+          : `https://framextv.cc/embed/${tmdbId}/${season}/${episode}?autoplay=1&muted=0`;
+
+      case 'vidy':
+        return isMovie
+          ? `https://www.vidy.st/movie/${tmdbId}?color=DC2626`
+          : `https://www.vidy.st/tv/${tmdbId}/${season}/${episode}?color=DC2626`;
+
+      case 'bingr':
+        return isMovie
+          ? `https://bingr.one/watch/movie/${tmdbId}`
+          : `https://bingr.one/watch/tv/${tmdbId}/${season}/${episode}`;
+
       case 'superembed':
         return isMovie
           ? `https://multiembed.mov/?video_id=${imdbId || tmdbId}`
@@ -190,86 +210,71 @@ export const StreamPlayer: React.FC<StreamPlayerProps> = ({ item, onClose, onSel
   ).slice(0, 4);
 
   return (
-    <div className={`w-full min-h-screen bg-[#06080e] text-[#f7f7fb] flex flex-col font-sans select-none overflow-x-hidden ${isCinemaMode ? 'cinema-active' : ''}`}>
+    <div className={`w-full min-h-screen flex flex-col font-sans select-none overflow-x-hidden ${isNetflix ? 'bg-[#141414] text-white' : 'bg-[#08080a] text-[#f7f7fb]'} ${isCinemaMode ? 'cinema-active' : ''}`}>
       {/* Top Stream X Header Bar */}
-      <header className="sticky top-0 z-40 bg-[#0b0717]/95 backdrop-blur-md border-b border-[#2e1065] px-4 sm:px-6 py-3 flex items-center justify-between gap-4 shadow-xl">
+      <header className={`sticky top-0 z-40 backdrop-blur-md border-b px-4 sm:px-6 py-3 flex items-center justify-between gap-4 shadow-xl ${isNetflix ? 'bg-[#141414]/95 border-[#262626]' : 'bg-[#0d0d10]/95 border-[#222228]'}`}>
         <div className="flex items-center gap-3 sm:gap-4 min-w-0">
           <button
             onClick={onClose}
-            className="flex items-center gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-[#170928] hover:bg-[#25103e] text-white rounded-xl text-xs font-bold border border-[#3b1754] transition-all cursor-pointer shadow-sm hover:scale-[1.02]"
+            className="w-9 h-9 rounded-full bg-[#18181d] hover:bg-[#272730] border border-[#2f2f38] text-white grid place-items-center transition-all cursor-pointer"
             title="Return to Catalog"
+            aria-label="Return to Catalog"
           >
             <ArrowLeft size={16} />
-            <span className="hidden sm:inline">Back</span>
           </button>
 
-          <div className="h-5 w-[1px] bg-[#3b1754] hidden sm:block" />
-
-          {/* Stream X Brand Badge & Title */}
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span
-              className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-wider rounded border shrink-0 ${
-                item.source === 'Toonix'
-                  ? 'bg-amber-950/80 text-amber-300 border-amber-600/50'
-                  : 'bg-purple-950/80 text-purple-300 border-purple-500/50'
-              }`}
-            >
-              {item.source}
-            </span>
-            <div className="min-w-0">
-              <h1 className="text-xs sm:text-sm md:text-base font-extrabold text-white tracking-wide truncate">
-                {item.title}
-              </h1>
-              <p className="text-[10px] sm:text-[11px] text-purple-300/80 font-medium truncate">
-                {isTvSeries ? `Season ${season} • Episode ${episode}` : `${item.category} • ${item.genre}`} {item.year ? `• ${item.year}` : ''}
-              </p>
-            </div>
+          <div className="min-w-0">
+            <h1 className="text-xs sm:text-sm md:text-base font-extrabold text-white tracking-wide truncate">
+              {item.title}
+            </h1>
+            <p className="text-[10px] sm:text-[11px] text-neutral-400 font-medium truncate">
+              {isTvSeries ? `Season ${season} · Episode ${episode}` : `${item.category} · ${item.genre}`} {item.year ? `· ${item.year}` : ''}
+            </p>
           </div>
         </div>
 
-        {/* Action Controls */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Direct Fail-Safe Action Button: Open in Player Tab */}
           <a
             href={activeStreamUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold rounded-lg shadow-md transition-all hover:scale-105"
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+              isNetflix
+                ? 'bg-[#E50914] hover:bg-[#f40612] text-white'
+                : 'bg-white hover:bg-neutral-200 text-black'
+            }`}
             title="Open native upstream player in dedicated tab"
           >
             <ExternalLink size={13} />
-            <span className="hidden sm:inline">Open in Player Tab</span>
+            <span className="hidden sm:inline">Direct Tab</span>
           </a>
 
-          {/* Ad-Shield Toggle Badge */}
           <button
             onClick={() => setAdShieldActive(!adShieldActive)}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
               adShieldActive
-                ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 hover:bg-emerald-900/70'
-                : 'bg-amber-950/60 border-amber-500/50 text-amber-300 hover:bg-amber-900/70'
+                ? 'bg-[#18181d] border-[#22c55e]/50 text-[#22c55e]'
+                : 'bg-[#18181d] border-[#2c2c34] text-neutral-300'
             }`}
             title="Toggle Stream X Smart Ad-Shield"
           >
-            {adShieldActive ? <ShieldCheck size={14} className="text-emerald-400" /> : <Shield size={14} />}
+            {adShieldActive ? <ShieldCheck size={14} /> : <Shield size={14} />}
             <span className="hidden md:inline">
               Ad-Shield: {adShieldActive ? 'ON' : 'OFF'}
             </span>
           </button>
 
-          {/* Reload Stream Button */}
           <button
             onClick={handleReloadStream}
-            className="p-2 text-purple-200 hover:text-white bg-[#170928] hover:bg-[#25103e] border border-[#3b1754] rounded-lg transition-colors cursor-pointer"
+            className="p-2 text-neutral-200 hover:text-white bg-[#18181d] hover:bg-[#23232a] border border-[#2c2c34] rounded-lg transition-colors cursor-pointer"
             title="Reload Video Stream"
           >
             <RotateCcw size={15} />
           </button>
 
-          {/* Toggle Fullscreen */}
           <button
             onClick={toggleFullscreen}
-            className="p-2 text-purple-200 hover:text-white bg-[#170928] hover:bg-[#25103e] border border-[#3b1754] rounded-lg transition-colors cursor-pointer"
+            className="p-2 text-neutral-200 hover:text-white bg-[#18181d] hover:bg-[#23232a] border border-[#2c2c34] rounded-lg transition-colors cursor-pointer"
             title="Toggle Fullscreen"
           >
             {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
@@ -278,7 +283,7 @@ export const StreamPlayer: React.FC<StreamPlayerProps> = ({ item, onClose, onSel
       </header>
 
       {/* Primary Video Stage Area */}
-      <section className="w-full bg-[#030206] border-b border-[#2e1065] flex flex-col items-center justify-center relative">
+      <section className={`w-full bg-black border-b flex flex-col items-center justify-center relative ${isNetflix ? 'border-[#262626]' : 'border-[#222228]'}`}>
         <div
           ref={containerRef}
           className={`relative w-full mx-auto bg-black flex items-center justify-center overflow-hidden transition-all duration-300 ${

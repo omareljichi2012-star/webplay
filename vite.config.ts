@@ -89,7 +89,7 @@ function romProxyPlugin(): Plugin {
       }
     }
 
-    // 1.5. SteamGridDB API Proxy (mirrors LaunchBox CORS-safe proxy protocol)
+    // 1.5. SteamGridDB API Proxy with bounded in-memory response cache
     if (req.url?.startsWith('/api/steamgrid/')) {
       if (req.method === 'OPTIONS') {
         res.statusCode = 200;
@@ -100,17 +100,41 @@ function romProxyPlugin(): Plugin {
         return res.end();
       }
 
+      const gCache = ((globalThis as any).__steamGridProxyCache ||= new Map<string, { status: number; body: string }>());
+      const cachedHit = gCache.get(req.url);
+      if (cachedHit) {
+        res.statusCode = cachedHit.status;
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        return res.end(cachedHit.body);
+      }
+
       let targetApiUrl = '';
       if (req.url.startsWith('/api/steamgrid/search/')) {
-        const searchTerm = req.url.substring('/api/steamgrid/search/'.length);
-        targetApiUrl = `https://www.steamgriddb.com/api/v2/search/autocomplete/${searchTerm}`;
-      } else if (req.url.startsWith('/api/steamgrid/grids/')) {
-        const rest = req.url.substring('/api/steamgrid/grids/'.length);
-        targetApiUrl = `https://www.steamgriddb.com/api/v2/grids/game/${rest}`;
+        const searchTerm = req.url.substring('/api/steamgrid/search/'.length).split('?')[0];
+        if (searchTerm && !searchTerm.includes('..')) {
+          targetApiUrl = `https://www.steamgriddb.com/api/v2/search/autocomplete/${searchTerm}`;
+        }
+      } else {
+        const assetMatch = req.url.match(/^\/api\/steamgrid\/(grids|heroes|logos|icons)\/([^?]+)(?:\?(.*))?$/);
+        if (assetMatch) {
+          const [, assetType, gameIdPart, queryPart] = assetMatch;
+          if (/^\d+$/.test(gameIdPart || '')) {
+            const safeQs = queryPart ? `?${new URLSearchParams(queryPart).toString()}` : '';
+            targetApiUrl = `https://www.steamgriddb.com/api/v2/${assetType}/game/${gameIdPart}${safeQs}`;
+          }
+        }
       }
 
       if (targetApiUrl) {
-        const apiKey = process.env.STEAMGRIDDB_API_KEY || '4604163d9e3c7458aad1c35e090954c0';
+        const apiKey = process.env.STEAMGRIDDB_API_KEY || '';
+        if (!apiKey) {
+          res.statusCode = 503;
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          return res.end(JSON.stringify({ success: false, error: 'STEAMGRIDDB_API_KEY is not configured' }));
+        }
         const headers = {
           'Authorization': `Bearer ${apiKey}`,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -118,14 +142,27 @@ function romProxyPlugin(): Plugin {
         };
 
         const upstreamReq = https.get(targetApiUrl, { headers }, (upstreamRes) => {
-          res.statusCode = upstreamRes.statusCode || 200;
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', '*');
-          res.setHeader('Access-Control-Expose-Headers', '*');
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-          upstreamRes.pipe(res);
+          const chunks: Buffer[] = [];
+          upstreamRes.on('data', (c: Buffer) => chunks.push(c));
+          upstreamRes.on('end', () => {
+            const status = upstreamRes.statusCode || 200;
+            const body = Buffer.concat(chunks).toString('utf8');
+            if (status >= 200 && status < 300) {
+              if (gCache.size >= 8000) {
+                const oldest = gCache.keys().next().value;
+                if (oldest) gCache.delete(oldest);
+              }
+              gCache.set(req.url, { status, body });
+            }
+            res.statusCode = status;
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', '*');
+            res.setHeader('Access-Control-Expose-Headers', '*');
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+            res.end(body);
+          });
         });
 
         upstreamReq.on('error', (err) => {
@@ -136,6 +173,238 @@ function romProxyPlugin(): Plugin {
         });
         return;
       }
+    }
+
+    // 1.6. RAWG.io Gameplay Video & Screenshot Proxy
+    if (req.url?.startsWith('/api/rawg/media')) {
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 200;
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+        return res.end();
+      }
+      const rawgKey = process.env.RAWG_API_KEY || '';
+      if (!rawgKey) {
+        res.statusCode = 503;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.end(JSON.stringify({ success: false, error: 'RAWG_API_KEY is not configured' }));
+      }
+      const rCache = ((globalThis as any).__rawgProxyCache ||= new Map<string, { status: number; body: string }>());
+      const cached = rCache.get(req.url);
+      if (cached) {
+        res.statusCode = cached.status;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.end(cached.body);
+      }
+
+      (async () => {
+        try {
+          const parsedUrl = new URL(req.url, 'http://localhost:3000');
+          const rawTitle = (parsedUrl.searchParams.get('title') || '').trim();
+          const rawConsole = (parsedUrl.searchParams.get('console') || '').trim();
+          if (!rawTitle || rawTitle.length > 200) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            return res.end(JSON.stringify({ success: false, error: 'Missing game title' }));
+          }
+          const cleanTitle = rawTitle.replace(/\s*\([^)]*\)/g, '').replace(/\s*\[[^\]]*\]/g, '').trim() || rawTitle;
+          const searchRes = await fetch(
+            `https://api.rawg.io/api/games?key=${encodeURIComponent(rawgKey)}&search=${encodeURIComponent(cleanTitle)}&page_size=6`,
+            { headers: { Accept: 'application/json', 'User-Agent': 'GAM-ONL-RetroHub/1.0' } }
+          );
+          if (!searchRes.ok) {
+            res.statusCode = searchRes.status;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            return res.end(JSON.stringify({ success: false, error: `RAWG HTTP ${searchRes.status}` }));
+          }
+          const searchJson: any = await searchRes.json();
+          const results: any[] = Array.isArray(searchJson?.results) ? searchJson.results : [];
+          if (results.length === 0) {
+            const body = JSON.stringify({ success: true, found: false, videoUrl: null, videos: [], screenshots: [] });
+            rCache.set(req.url, { status: 200, body });
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            return res.end(body);
+          }
+
+          const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+          const targetNorm = norm(cleanTitle);
+          const consoleLower = rawConsole.toLowerCase();
+          const best = [...results].sort((a, b) => {
+            const scoreItem = (item: any) => {
+              let pts = 0;
+              const nameNorm = norm(item.name || '');
+              if (nameNorm === targetNorm) pts += 120;
+              else if (nameNorm.includes(targetNorm) || targetNorm.includes(nameNorm)) pts += 60;
+              if (item.clip?.clip || item.clip?.clips?.full) pts += 45;
+              if (Array.isArray(item.platforms) && consoleLower) {
+                const plats = item.platforms.map((p: any) => String(p?.platform?.name || '').toLowerCase()).join(' ');
+                if (consoleLower === 'ps1' && plats.includes('playstation')) pts += 25;
+              }
+              pts += Math.min(20, Number(item.added || 0) / 500);
+              return pts;
+            };
+            return scoreItem(b) - scoreItem(a);
+          })[0];
+
+          const [moviesRes, shotsRes] = await Promise.all([
+            fetch(`https://api.rawg.io/api/games/${best.id}/movies?key=${encodeURIComponent(rawgKey)}`, {
+              headers: { Accept: 'application/json', 'User-Agent': 'GAM-ONL-RetroHub/1.0' },
+            }).catch(() => null),
+            fetch(`https://api.rawg.io/api/games/${best.id}/screenshots?key=${encodeURIComponent(rawgKey)}`, {
+              headers: { Accept: 'application/json', 'User-Agent': 'GAM-ONL-RetroHub/1.0' },
+            }).catch(() => null),
+          ]);
+
+          const moviesJson: any = moviesRes && moviesRes.ok ? await moviesRes.json().catch(() => null) : null;
+          const shotsJson: any = shotsRes && shotsRes.ok ? await shotsRes.json().catch(() => null) : null;
+          const videos: any[] = [];
+          if (best.clip?.clip || best.clip?.clips?.full || best.clip?.clips?.['640']) {
+            videos.push({
+              name: `${best.name} Gameplay Clip`,
+              preview: best.clip.preview || best.background_image || null,
+              url480: best.clip.clips?.['640'] || best.clip.clips?.['320'] || best.clip.clip || null,
+              urlMax: best.clip.clips?.full || best.clip.clip || best.clip.clips?.['640'] || null,
+            });
+          }
+          for (const m of Array.isArray(moviesJson?.results) ? moviesJson.results : []) {
+            const uMax = m?.data?.max || m?.data?.['480'] || null;
+            const u480 = m?.data?.['480'] || m?.data?.max || null;
+            if (uMax || u480) {
+              videos.push({
+                name: String(m.name || 'Gameplay Trailer'),
+                preview: m.preview || best.background_image || null,
+                url480: u480,
+                urlMax: uMax,
+              });
+            }
+          }
+          const shotUrls: string[] = [];
+          for (const s of Array.isArray(shotsJson?.results) ? shotsJson.results : best.short_screenshots || []) {
+            if (s?.image && !shotUrls.includes(s.image)) shotUrls.push(s.image);
+          }
+          if (best.background_image && !shotUrls.includes(best.background_image)) shotUrls.unshift(best.background_image);
+
+          const body = JSON.stringify({
+            success: true,
+            found: true,
+            rawgId: best.id,
+            name: best.name,
+            slug: best.slug,
+            released: best.released || null,
+            rating: best.rating || null,
+            backgroundImage: best.background_image || null,
+            videoUrl: videos[0]?.urlMax || videos[0]?.url480 || null,
+            videoPreview: videos[0]?.preview || best.background_image || null,
+            videos,
+            screenshots: shotUrls.slice(0, 12),
+          });
+          if (rCache.size >= 4000) {
+            const oldest = rCache.keys().next().value;
+            if (oldest) rCache.delete(oldest);
+          }
+          rCache.set(req.url, { status: 200, body });
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(body);
+        } catch (err: any) {
+          res.statusCode = 502;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ success: false, error: err?.message || 'RAWG error' }));
+        }
+      })();
+      return;
+    }
+
+    // 1.7. AniList ID Resolver for AniEmbed / AnimeEmbed
+    if (req.url?.startsWith('/api/anilist/resolve')) {
+      const aCache = ((globalThis as any).__anilistProxyCache ||= new Map<string, { status: number; body: string }>());
+      const cached = aCache.get(req.url);
+      if (cached) {
+        res.statusCode = cached.status;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.end(cached.body);
+      }
+      (async () => {
+        try {
+          const parsedUrl = new URL(req.url, 'http://localhost:3000');
+          const rawTitle = (parsedUrl.searchParams.get('title') || '').trim();
+          const season = Number(parsedUrl.searchParams.get('season') || 1);
+          const year = Number(parsedUrl.searchParams.get('year') || 0);
+          const formatHint = (parsedUrl.searchParams.get('format') || '').toUpperCase();
+          if (!rawTitle || rawTitle.length > 200) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            return res.end(JSON.stringify({ success: false, error: 'Missing title' }));
+          }
+          const searchTitle =
+            season > 1 && !/season\s*\d+/i.test(rawTitle) ? `${rawTitle} Season ${season}` : rawTitle;
+
+          const runGql = async (term: string) => {
+            const r = await fetch('https://graphql.anilist.co', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({
+                query: `query ($search: String) {
+                  Page(perPage: 10) {
+                    media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+                      id idMal format seasonYear episodes title { romaji english native }
+                    }
+                  }
+                }`,
+                variables: { search: term },
+              }),
+            });
+            if (!r.ok) return [];
+            const j: any = await r.json().catch(() => null);
+            return Array.isArray(j?.data?.Page?.media) ? j.data.Page.media : [];
+          };
+
+          let candidates = await runGql(searchTitle);
+          if (candidates.length === 0 && searchTitle !== rawTitle) candidates = await runGql(rawTitle);
+          if (candidates.length === 0) {
+            res.statusCode = 404;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            return res.end(JSON.stringify({ success: false, error: 'No AniList match' }));
+          }
+
+          const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+          const targetNorm = norm(rawTitle);
+          const best = [...candidates].sort((a, b) => {
+            const score = (m: any) => {
+              let pts = 0;
+              const eng = norm(m.title?.english || '');
+              const rom = norm(m.title?.romaji || '');
+              if (eng === targetNorm || rom === targetNorm) pts += 100;
+              else if (eng.includes(targetNorm) || rom.includes(targetNorm)) pts += 40;
+              if (formatHint === 'MOVIE' && m.format === 'MOVIE') pts += 50;
+              if (formatHint === 'TV' && (m.format === 'TV' || m.format === 'ONA')) pts += 50;
+              if (year > 0 && m.seasonYear === year) pts += 35;
+              return pts;
+            };
+            return score(b) - score(a);
+          })[0];
+
+          const body = JSON.stringify({
+            success: true,
+            anilistId: best.id,
+            malId: best.idMal || null,
+            title: best.title?.english || best.title?.romaji || rawTitle,
+            format: best.format || null,
+            seasonYear: best.seasonYear || null,
+          });
+          aCache.set(req.url, { status: 200, body });
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(body);
+        } catch (err: any) {
+          res.statusCode = 502;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ success: false, error: err?.message || 'AniList error' }));
+        }
+      })();
+      return;
     }
 
 

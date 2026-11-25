@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getTextureSafeUrl, fetchLaunchBox3DAssetsFromApi } from '../launchboxApi';
 import { resolveSteamGridImage } from '../steamgridApi';
+import { useTheme } from '../context/ThemeContext';
 
 interface SafeGameImageProps {
   primaryUrl?: string | null;
@@ -10,6 +11,7 @@ interface SafeGameImageProps {
   crossOrigin?: 'anonymous' | 'use-credentials' | '' | undefined;
   title?: string;
   consoleType?: string;
+  eager?: boolean;
 }
 
 /**
@@ -225,7 +227,11 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
   crossOrigin,
   title,
   consoleType,
+  eager = false,
 }) => {
+  const { settings } = useTheme();
+  const posterMode = settings?.posterLabelMode || 'labeled';
+
   const displayTitle = title || alt || 'Retro Game';
   const cType = (consoleType || '').toUpperCase();
   const isPs1 = cType === 'PS1' || cType === 'PLAYSTATION' || cType === 'PSX';
@@ -242,26 +248,30 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
     [isPs1, isGenesis, displayTitle]
   );
 
-  // Stage 1: Build static candidate chain (direct + /api/proxy + format fallbacks)
+  // Stage 1: Build static candidate chain respecting labeled box art vs clean poster preference
   const staticCandidates = useMemo(() => {
     const chain: string[] = [];
     const primary = typeof primaryUrl === 'string' ? primaryUrl.trim() : '';
     const fallback = typeof fallbackUrl === 'string' ? fallbackUrl.trim() : '';
 
-    if (primary) {
-      appendProxiedVariants(primary, chain, false);
+    // In 'labeled' mode for PS1, scanned Libretro retail boxarts contain printed PlayStation labels
+    const first = isPs1 && posterMode === 'labeled' && fallback ? fallback : primary;
+    const second = first === fallback ? primary : fallback;
+
+    if (first) {
+      appendProxiedVariants(first, chain, false);
     }
-    if (fallback && fallback !== primary) {
-      appendProxiedVariants(fallback, chain, false);
+    if (second && second !== first) {
+      appendProxiedVariants(second, chain, false);
     }
-    if (primary) {
-      appendProxiedVariants(primary, chain, true);
+    if (first) {
+      appendProxiedVariants(first, chain, true);
     }
-    if (fallback && fallback !== primary) {
-      appendProxiedVariants(fallback, chain, true);
+    if (second && second !== first) {
+      appendProxiedVariants(second, chain, true);
     }
     return chain;
-  }, [primaryUrl, fallbackUrl]);
+  }, [primaryUrl, fallbackUrl, isPs1, posterMode]);
 
   const [candidateIndex, setCandidateIndex] = useState<number>(0);
   const [liveCandidates, setLiveCandidates] = useState<string[]>([]);
@@ -270,19 +280,20 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
   const lookupGenerationRef = useRef<number>(0);
   const liveTriggeredRef = useRef<boolean>(false);
 
-  // Combine static candidates + any live API resolved candidates
+  const hasSteamGridPrimary =
+    typeof primaryUrl === 'string' && primaryUrl.includes('steamgriddb.com');
+
+  // Combine static candidates + live SteamGridDB candidates in active mode priority
   const allCandidates = useMemo(() => {
     if (liveCandidates.length === 0) return staticCandidates;
-    const merged = [...staticCandidates];
-    for (const url of liveCandidates) {
-      if (!merged.includes(url)) {
-        merged.push(url);
-      }
-    }
-    return merged;
-  }, [staticCandidates, liveCandidates]);
+    const base =
+      posterMode === 'labeled' || !hasSteamGridPrimary
+        ? [...liveCandidates, ...staticCandidates]
+        : [...staticCandidates, ...liveCandidates];
+    return Array.from(new Set(base));
+  }, [staticCandidates, liveCandidates, posterMode, hasSteamGridPrimary]);
 
-  // Reset resolution state whenever item props change
+  // Reset resolution state whenever item props or poster mode change
   useEffect(() => {
     lookupGenerationRef.current += 1;
     liveTriggeredRef.current = false;
@@ -290,7 +301,7 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
     setLiveCandidates([]);
     setLiveLookupDone(false);
     setFallbackStage(0);
-  }, [primaryUrl, fallbackUrl, displayTitle, consoleType]);
+  }, [primaryUrl, fallbackUrl, displayTitle, consoleType, posterMode]);
 
   const triggerLiveApiResolution = () => {
     if (liveTriggeredRef.current) return;
@@ -303,17 +314,27 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
       cType.includes('PORT') ||
       !cType;
 
-    if (isWebOrFlash) {
+    if (isPs1 || isWebOrFlash) {
       resolveSteamGridImage(displayTitle, consoleType)
         .then((assets) => {
           if (lookupGenerationRef.current !== generation) return;
           const resolved: string[] = [];
-          if (assets?.poster) appendProxiedVariants(assets.poster, resolved, false);
+          if (posterMode === 'labeled') {
+            if (assets?.labeledPoster) appendProxiedVariants(assets.labeledPoster, resolved, false);
+            if (assets?.cleanPoster) appendProxiedVariants(assets.cleanPoster, resolved, false);
+          } else {
+            if (assets?.cleanPoster) appendProxiedVariants(assets.cleanPoster, resolved, false);
+            if (assets?.poster) appendProxiedVariants(assets.poster, resolved, false);
+            if (assets?.labeledPoster) appendProxiedVariants(assets.labeledPoster, resolved, false);
+          }
           if (assets?.thumb) appendProxiedVariants(assets.thumb, resolved, false);
-          const fresh = resolved.filter((u) => !staticCandidates.includes(u));
+          const fresh = resolved.filter((u) => !staticCandidates.includes(u) || posterMode === 'labeled');
 
           if (fresh.length > 0) {
             setLiveCandidates(fresh);
+            setCandidateIndex(0);
+          } else if (isPs1 && staticCandidates.length > 0) {
+            setLiveLookupDone(true);
           } else {
             setLiveLookupDone(true);
             setFallbackStage(1);
@@ -322,7 +343,9 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
         .catch(() => {
           if (lookupGenerationRef.current !== generation) return;
           setLiveLookupDone(true);
-          setFallbackStage(1);
+          if (!isPs1 || staticCandidates.length === 0) {
+            setFallbackStage(1);
+          }
         });
     } else {
       fetchLaunchBox3DAssetsFromApi(displayTitle, consoleType || 'NES')
@@ -353,15 +376,21 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
     }
   };
 
-  // If the manifest provided no static URL at all, immediately run the live API lookup
+  // Trigger live API lookup when no static URL exists, for PS1 lacking SteamGridDB, OR when user prefers SteamGridDB labeled art
   useEffect(() => {
-    if (staticCandidates.length === 0) {
+    if (
+      staticCandidates.length === 0 ||
+      (isPs1 && (!hasSteamGridPrimary || posterMode === 'labeled'))
+    ) {
       triggerLiveApiResolution();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staticCandidates, displayTitle, consoleType]);
+  }, [staticCandidates, isPs1, hasSteamGridPrimary, posterMode, displayTitle, consoleType]);
 
   const currentSrc = useMemo(() => {
+    if (isPs1 && !hasSteamGridPrimary && staticCandidates.length === 0 && liveCandidates.length === 0 && !liveLookupDone) {
+      return proceduralFallback;
+    }
     if (candidateIndex < allCandidates.length) {
       return allCandidates[candidateIndex];
     }
@@ -373,6 +402,9 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
     }
     return proceduralFallback;
   }, [
+    isPs1,
+    hasSteamGridPrimary,
+    liveCandidates.length,
     candidateIndex,
     allCandidates,
     fallbackStage,
@@ -413,7 +445,8 @@ export const SafeGameImage: React.FC<SafeGameImageProps> = ({
       crossOrigin={crossOrigin}
       referrerPolicy="no-referrer"
       onError={handleError}
-      loading="lazy"
+      loading={eager ? 'eager' : 'lazy'}
+      decoding="async"
     />
   );
 };

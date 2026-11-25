@@ -1,5 +1,5 @@
 export type EmbedMediaType = 'movie' | 'tv';
-export type ServerFlagCode = 'us' | 'gb' | 'fr' | 'es' | 'it';
+export type ServerFlagCode = 'us' | 'gb' | 'fr' | 'es' | 'it' | 'jp';
 
 export interface MovieServerConfig {
   key: string;
@@ -10,17 +10,21 @@ export interface MovieServerConfig {
   baseUrl: string;
   pathPattern: string;
   tvPathPattern: string;
-  group: 'vidsrc' | 'custom' | 'language';
-  idType?: 'tmdb' | 'imdb';
+  group: 'vidsrc' | 'custom' | 'anime' | 'language';
+  idType?: 'tmdb' | 'imdb' | 'anilist';
   acceptsBothIds?: boolean;
   noSandboxBlock?: boolean;
   language?: string;
+  trackLabel?: 'SUB' | 'DUB';
 }
 
 /**
- * Centralized base URLs for multi-server movie & TV embedding.
+ * Centralized base URLs for multi-server movie, TV, cartoon & anime embedding.
  */
 export const SERVER_BASE_URLS = {
+  cinesrc: 'https://cinesrc.st',
+  aniembed: 'https://aniembed.se',
+  animeembed: 'https://animeembed.com',
   vidsrcMov: 'https://vidsrc.mov',
   vidsrcSh: 'https://vidsrc.sh',
   vidsrcCc: 'https://vidsrc.cc',
@@ -33,14 +37,29 @@ export const SERVER_BASE_URLS = {
   superembed: 'https://multiembed.mov',
   streamex: 'https://streamex.hn',
   framex: 'https://framex.vip',
+  framextv: 'https://framextv.cc',
+  vidy: 'https://www.vidy.st',
+  bingr: 'https://bingr.one',
 } as const;
 
 /**
- * Centralized SERVERS config map supporting dynamic movie & TV Show embeds
- * (`{id}`, `{season}`, `{episode}`) across all mirrors, backup providers, and language dubs.
- * Ordered cleanly for the 4-column under-player server grid.
+ * Centralized SERVERS config map supporting dynamic Movies, TV Shows, Cartoons & Anime embeds
+ * (`{id}`, `{season}`, `{episode}`) including AniList-backed Sub & Dub anime servers.
  */
 export const SERVERS: Record<string, MovieServerConfig> = {
+  cinesrc: {
+    key: 'cinesrc',
+    label: 'CineSrc HD',
+    shortLabel: 'cinesrc',
+    flag: 'us',
+    featured: true,
+    baseUrl: SERVER_BASE_URLS.cinesrc,
+    pathPattern: '/embed/movie/{id}',
+    tvPathPattern: '/embed/tv/{id}?s={season}&e={episode}',
+    group: 'custom',
+    idType: 'tmdb',
+    noSandboxBlock: true,
+  },
   streamex: {
     key: 'streamex',
     label: 'StreamX Embed',
@@ -50,6 +69,43 @@ export const SERVERS: Record<string, MovieServerConfig> = {
     baseUrl: SERVER_BASE_URLS.streamex,
     pathPattern: '/embed/movie/{id}',
     tvPathPattern: '/embed/tv/{id}/{season}/{episode}',
+    group: 'custom',
+    idType: 'tmdb',
+    noSandboxBlock: true,
+  },
+  framextv: {
+    key: 'framextv',
+    label: 'FrameXTV',
+    shortLabel: 'framextv',
+    flag: 'us',
+    featured: true,
+    baseUrl: SERVER_BASE_URLS.framextv,
+    pathPattern: '/embed/{id}?autoplay=1&muted=0',
+    tvPathPattern: '/embed/{id}/{season}/{episode}?autoplay=1&muted=0',
+    group: 'custom',
+    idType: 'tmdb',
+    noSandboxBlock: true,
+  },
+  vidy: {
+    key: 'vidy',
+    label: 'Vidy HD',
+    shortLabel: 'vidy',
+    flag: 'gb',
+    baseUrl: SERVER_BASE_URLS.vidy,
+    pathPattern: '/movie/{id}?color=DC2626',
+    tvPathPattern: '/tv/{id}/{season}/{episode}?color=DC2626',
+    group: 'custom',
+    idType: 'tmdb',
+    noSandboxBlock: true,
+  },
+  bingr: {
+    key: 'bingr',
+    label: 'Bingr',
+    shortLabel: 'bingr',
+    flag: 'us',
+    baseUrl: SERVER_BASE_URLS.bingr,
+    pathPattern: '/watch/movie/{id}',
+    tvPathPattern: '/watch/tv/{id}/{season}/{episode}',
     group: 'custom',
     idType: 'tmdb',
     noSandboxBlock: true,
@@ -191,6 +247,63 @@ export const SERVERS: Record<string, MovieServerConfig> = {
     idType: 'tmdb',
     noSandboxBlock: false,
   },
+
+  // --- Dedicated Anime Only Embeds (Sub & Dub via AniList ID) ---
+  aniembed_sub: {
+    key: 'aniembed_sub',
+    label: 'AniEmbed (Sub)',
+    shortLabel: 'aniembed',
+    flag: 'jp',
+    featured: true,
+    baseUrl: SERVER_BASE_URLS.aniembed,
+    pathPattern: '/e/{id}/1',
+    tvPathPattern: '/e/{id}/{episode}',
+    group: 'anime',
+    idType: 'anilist',
+    noSandboxBlock: true,
+    trackLabel: 'SUB',
+  },
+  aniembed_dub: {
+    key: 'aniembed_dub',
+    label: 'AniEmbed (Dub)',
+    shortLabel: 'aniembed',
+    flag: 'us',
+    baseUrl: SERVER_BASE_URLS.aniembed,
+    pathPattern: '/e/{id}/1?lang=dub',
+    tvPathPattern: '/e/{id}/{episode}?lang=dub',
+    group: 'anime',
+    idType: 'anilist',
+    noSandboxBlock: true,
+    trackLabel: 'DUB',
+  },
+  animeembed_sub: {
+    key: 'animeembed_sub',
+    label: 'AnimeEmbed (Sub)',
+    shortLabel: 'animeembed',
+    flag: 'jp',
+    featured: true,
+    baseUrl: SERVER_BASE_URLS.animeembed,
+    pathPattern: '/embed/ani/{id}/1?track=sub&autoPlay=0&muted=0&autoSkip=1&autoNext=0&start=0&accent=9b87ff',
+    tvPathPattern: '/embed/ani/{id}/{episode}?track=sub&autoPlay=0&muted=0&autoSkip=1&autoNext=0&start=0&accent=9b87ff',
+    group: 'anime',
+    idType: 'anilist',
+    noSandboxBlock: true,
+    trackLabel: 'SUB',
+  },
+  animeembed_dub: {
+    key: 'animeembed_dub',
+    label: 'AnimeEmbed (Dub)',
+    shortLabel: 'animeembed',
+    flag: 'us',
+    baseUrl: SERVER_BASE_URLS.animeembed,
+    pathPattern: '/embed/ani/{id}/1?track=dub&autoPlay=0&muted=0&autoSkip=1&autoNext=0&start=0&accent=9b87ff',
+    tvPathPattern: '/embed/ani/{id}/{episode}?track=dub&autoPlay=0&muted=0&autoSkip=1&autoNext=0&start=0&accent=9b87ff',
+    group: 'anime',
+    idType: 'anilist',
+    noSandboxBlock: true,
+    trackLabel: 'DUB',
+  },
+
   vidsrc_fr: {
     key: 'vidsrc_fr',
     label: 'French (FR)',
@@ -242,8 +355,8 @@ export function isImdbId(value?: string | null): boolean {
 }
 
 /**
- * Dynamically generates the embed URL for any TMDB Movie or TV Show ID
- * (and season/episode for TV shows) using the selected server's URL template.
+ * Dynamically generates the embed URL for any Movie, TV Show, Cartoon, or Anime
+ * using TMDB, IMDb, or AniList IDs as required by each provider.
  */
 export function buildMediaEmbedUrl(
   serverKey: string,
@@ -252,6 +365,7 @@ export function buildMediaEmbedUrl(
   options?: {
     imdbId?: string | null;
     tmdbId?: string | null;
+    anilistId?: string | number | null;
     season?: number;
     episode?: number;
   }
@@ -261,9 +375,12 @@ export function buildMediaEmbedUrl(
   const rawId = String(id || '').trim();
   const imdbId = options?.imdbId ? String(options.imdbId).trim() : '';
   const tmdbId = options?.tmdbId ? String(options.tmdbId).trim() : '';
+  const anilistId = options?.anilistId ? String(options.anilistId).trim() : '';
 
   let selectedId = rawId;
-  if (cfg.acceptsBothIds) {
+  if (cfg.idType === 'anilist') {
+    selectedId = anilistId || tmdbId || rawId;
+  } else if (cfg.acceptsBothIds) {
     if (isImdbId(rawId)) {
       selectedId = rawId;
     } else if (rawId) {

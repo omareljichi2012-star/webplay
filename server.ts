@@ -7,7 +7,12 @@ import zlib from 'node:zlib';
 const PORT = Number(process.env.PORT || 3000);
 const TMDB_API_KEY = process.env.TMDB_API_KEY || '939414741c66f6980834245ee7f754b4';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+const STEAMGRIDDB_API_KEY = process.env.STEAMGRIDDB_API_KEY || '';
+const RAWG_API_KEY = process.env.RAWG_API_KEY || '';
 const PUBLIC_TMDB_DIR = path.resolve(process.cwd(), 'public', 'tmdb');
+const steamGridCache = new Map<string, { status: number; data: unknown }>();
+const rawgCache = new Map<string, { status: number; data: unknown }>();
+const anilistCache = new Map<string, { status: number; data: unknown }>();
 
 export type RawArchiveTuple = [
   number,   // 0: id
@@ -682,6 +687,348 @@ async function createAppServer() {
       metadataScopeNote: null,
       items,
     });
+  });
+
+  // 3. SteamGridDB Proxy Routes (cached for fast PS1/WebPort/Flash cover resolution)
+  app.get('/api/steamgrid/search/:term', async (req: Request, res: Response) => {
+    if (!STEAMGRIDDB_API_KEY) {
+      res.status(503).json({ success: false, error: 'STEAMGRIDDB_API_KEY is not configured' });
+      return;
+    }
+    const rawTerm = String(req.params.term || '').trim();
+    if (!rawTerm || rawTerm.length > 200 || rawTerm.includes('..')) {
+      res.status(400).json({ success: false, error: 'Invalid search term' });
+      return;
+    }
+    const cacheKey = `search:${rawTerm.toLowerCase()}`;
+    const hit = steamGridCache.get(cacheKey);
+    if (hit) {
+      res.status(hit.status).json(hit.data);
+      return;
+    }
+    try {
+      const target = `https://www.steamgriddb.com/api/v2/search/autocomplete/${encodeURIComponent(rawTerm)}`;
+      const upstream = await fetch(target, {
+        headers: { Authorization: `Bearer ${STEAMGRIDDB_API_KEY}`, Accept: 'application/json' },
+      });
+      const data = await upstream.json();
+      if (upstream.ok) {
+        if (steamGridCache.size >= 8000) {
+          const oldest = steamGridCache.keys().next().value;
+          if (oldest) steamGridCache.delete(oldest);
+        }
+        steamGridCache.set(cacheKey, { status: upstream.status, data });
+      }
+      res.status(upstream.status).json(data);
+    } catch (err: any) {
+      res.status(502).json({ success: false, error: err?.message || 'SteamGridDB upstream error' });
+    }
+  });
+
+  const allowedSteamGridTypes = new Set(['grids', 'heroes', 'logos', 'icons']);
+  const allowedSteamGridParams = new Set(['dimensions', 'styles', 'types', 'nsfw', 'humor', 'epilepsy', 'mimes', 'page', 'limit']);
+
+  app.get('/api/steamgrid/:assetType/:gameId', async (req: Request, res: Response) => {
+    const assetType = String(req.params.assetType || '').trim().toLowerCase();
+    if (!allowedSteamGridTypes.has(assetType)) {
+      res.status(404).json({ success: false, error: 'Unsupported SteamGridDB asset type' });
+      return;
+    }
+    if (!STEAMGRIDDB_API_KEY) {
+      res.status(503).json({ success: false, error: 'STEAMGRIDDB_API_KEY is not configured' });
+      return;
+    }
+    const gameId = String(req.params.gameId || '').trim();
+    if (!/^\d+$/.test(gameId)) {
+      res.status(400).json({ success: false, error: 'Invalid SteamGridDB gameId' });
+      return;
+    }
+
+    const forwardParams = new URLSearchParams();
+    for (const [k, v] of Object.entries(req.query || {})) {
+      if (allowedSteamGridParams.has(k) && typeof v === 'string' && v.trim()) {
+        forwardParams.set(k, v.trim());
+      }
+    }
+    const qsString = forwardParams.toString();
+    const qs = qsString ? `?${qsString}` : '';
+    const cacheKey = `${assetType}:${gameId}:${qsString}`;
+    const hit = steamGridCache.get(cacheKey);
+    if (hit) {
+      res.status(hit.status).json(hit.data);
+      return;
+    }
+    try {
+      const target = `https://www.steamgriddb.com/api/v2/${assetType}/game/${gameId}${qs}`;
+      const upstream = await fetch(target, {
+        headers: { Authorization: `Bearer ${STEAMGRIDDB_API_KEY}`, Accept: 'application/json' },
+      });
+      const data = await upstream.json();
+      if (upstream.ok) {
+        if (steamGridCache.size >= 8000) {
+          const oldest = steamGridCache.keys().next().value;
+          if (oldest) steamGridCache.delete(oldest);
+        }
+        steamGridCache.set(cacheKey, { status: upstream.status, data });
+      }
+      res.status(upstream.status).json(data);
+    } catch (err: any) {
+      res.status(502).json({ success: false, error: err?.message || 'SteamGridDB upstream error' });
+    }
+  });
+
+  // 4. RAWG.io Gameplay Video Clips & Screenshots Proxy
+  app.get('/api/rawg/media', async (req: Request, res: Response) => {
+    if (!RAWG_API_KEY) {
+      res.status(503).json({ success: false, error: 'RAWG_API_KEY is not configured' });
+      return;
+    }
+    const rawTitle = String(req.query.title || '').trim();
+    const rawConsole = String(req.query.console || '').trim();
+    if (!rawTitle || rawTitle.length > 200) {
+      res.status(400).json({ success: false, error: 'Missing or invalid game title' });
+      return;
+    }
+
+    const cleanTitle = rawTitle
+      .replace(/\s*\([^)]*\)/g, '')
+      .replace(/\s*\[[^\]]*\]/g, '')
+      .trim() || rawTitle;
+
+    const cacheKey = `rawg:${rawConsole.toLowerCase()}:${cleanTitle.toLowerCase()}`;
+    const hit = rawgCache.get(cacheKey);
+    if (hit) {
+      res.status(hit.status).json(hit.data);
+      return;
+    }
+
+    try {
+      const searchUrl = `https://api.rawg.io/api/games?key=${encodeURIComponent(
+        RAWG_API_KEY
+      )}&search=${encodeURIComponent(cleanTitle)}&page_size=6`;
+
+      const searchRes = await fetch(searchUrl, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'GAM-ONL-RetroHub/1.0',
+        },
+      });
+      if (!searchRes.ok) {
+        const errPayload = await searchRes.json().catch(() => ({ error: `HTTP ${searchRes.status}` }));
+        res.status(searchRes.status).json({ success: false, ...errPayload });
+        return;
+      }
+
+      const searchJson: any = await searchRes.json();
+      const results: any[] = Array.isArray(searchJson?.results) ? searchJson.results : [];
+      if (results.length === 0) {
+        const emptyPayload = { success: true, found: false, videoUrl: null, videos: [], screenshots: [] };
+        rawgCache.set(cacheKey, { status: 200, data: emptyPayload });
+        res.json(emptyPayload);
+        return;
+      }
+
+      const norm = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      const targetNorm = norm(cleanTitle);
+      const consoleLower = rawConsole.toLowerCase();
+
+      const scored = [...results].sort((a, b) => {
+        const scoreItem = (item: any) => {
+          let pts = 0;
+          const nameNorm = norm(item.name || '');
+          if (nameNorm === targetNorm) pts += 120;
+          else if (nameNorm.includes(targetNorm) || targetNorm.includes(nameNorm)) pts += 60;
+          if (item.clip?.clip || item.clip?.clips?.full) pts += 45;
+          if (Array.isArray(item.platforms) && consoleLower) {
+            const plats = item.platforms.map((p: any) => String(p?.platform?.name || '').toLowerCase()).join(' ');
+            if (consoleLower === 'ps1' && plats.includes('playstation')) pts += 25;
+            else if (consoleLower.includes('snes') && plats.includes('snes')) pts += 25;
+            else if (consoleLower === 'nes' && plats.includes('nes')) pts += 25;
+            else if (consoleLower === 'n64' && plats.includes('nintendo 64')) pts += 25;
+            else if (consoleLower === 'gba' && plats.includes('game boy advance')) pts += 25;
+          }
+          pts += Math.min(20, Number(item.added || 0) / 500);
+          return pts;
+        };
+        return scoreItem(b) - scoreItem(a);
+      });
+
+      const best = scored[0];
+      const rawgId = best.id;
+
+      // Fetch full trailers/movies + screenshots in parallel
+      const [moviesRes, shotsRes] = await Promise.all([
+        fetch(
+          `https://api.rawg.io/api/games/${rawgId}/movies?key=${encodeURIComponent(RAWG_API_KEY)}`,
+          { headers: { Accept: 'application/json', 'User-Agent': 'GAM-ONL-RetroHub/1.0' } }
+        ).catch(() => null),
+        fetch(
+          `https://api.rawg.io/api/games/${rawgId}/screenshots?key=${encodeURIComponent(RAWG_API_KEY)}`,
+          { headers: { Accept: 'application/json', 'User-Agent': 'GAM-ONL-RetroHub/1.0' } }
+        ).catch(() => null),
+      ]);
+
+      const moviesJson: any = moviesRes && moviesRes.ok ? await moviesRes.json().catch(() => null) : null;
+      const shotsJson: any = shotsRes && shotsRes.ok ? await shotsRes.json().catch(() => null) : null;
+
+      const movieItems: any[] = Array.isArray(moviesJson?.results) ? moviesJson.results : [];
+      const videos: Array<{ name: string; preview: string | null; url480: string | null; urlMax: string | null }> = [];
+
+      if (best.clip?.clip || best.clip?.clips?.full || best.clip?.clips?.['640']) {
+        videos.push({
+          name: `${best.name} Gameplay Clip`,
+          preview: best.clip.preview || best.background_image || null,
+          url480: best.clip.clips?.['640'] || best.clip.clips?.['320'] || best.clip.clip || null,
+          urlMax: best.clip.clips?.full || best.clip.clip || best.clip.clips?.['640'] || null,
+        });
+      }
+
+      for (const m of movieItems) {
+        const uMax = m?.data?.max || m?.data?.['480'] || null;
+        const u480 = m?.data?.['480'] || m?.data?.max || null;
+        if (uMax || u480) {
+          videos.push({
+            name: String(m.name || 'Gameplay Trailer'),
+            preview: m.preview || best.background_image || null,
+            url480: u480,
+            urlMax: uMax,
+          });
+        }
+      }
+
+      const shotUrls: string[] = [];
+      const rawShots = Array.isArray(shotsJson?.results) ? shotsJson.results : best.short_screenshots || [];
+      for (const s of rawShots) {
+        if (s?.image && !shotUrls.includes(s.image)) {
+          shotUrls.push(s.image);
+        }
+      }
+      if (best.background_image && !shotUrls.includes(best.background_image)) {
+        shotUrls.unshift(best.background_image);
+      }
+
+      const payload = {
+        success: true,
+        found: true,
+        rawgId,
+        name: best.name,
+        slug: best.slug,
+        released: best.released || null,
+        rating: best.rating || null,
+        backgroundImage: best.background_image || null,
+        videoUrl: videos[0]?.urlMax || videos[0]?.url480 || null,
+        videoPreview: videos[0]?.preview || best.background_image || null,
+        videos,
+        screenshots: shotUrls.slice(0, 12),
+      };
+
+      if (rawgCache.size >= 4000) {
+        const oldest = rawgCache.keys().next().value;
+        if (oldest) rawgCache.delete(oldest);
+      }
+      rawgCache.set(cacheKey, { status: 200, data: payload });
+      res.json(payload);
+    } catch (err: any) {
+      res.status(502).json({ success: false, error: err?.message || 'RAWG upstream error' });
+    }
+  });
+
+  // 5. AniList ID Resolver (Maps TMDB Anime titles/seasons to AniList IDs for AniEmbed & AnimeEmbed)
+  app.get('/api/anilist/resolve', async (req: Request, res: Response) => {
+    const rawTitle = String(req.query.title || '').trim();
+    const season = Number(req.query.season || 1);
+    const year = Number(req.query.year || 0);
+    const formatHint = String(req.query.format || '').toUpperCase();
+
+    if (!rawTitle || rawTitle.length > 200) {
+      res.status(400).json({ success: false, error: 'Missing anime title' });
+      return;
+    }
+
+    const searchTitle =
+      season > 1 && !/season\s*\d+/i.test(rawTitle) ? `${rawTitle} Season ${season}` : rawTitle;
+    const cacheKey = `ali:${searchTitle.toLowerCase()}:${year}:${formatHint}`;
+    const hit = anilistCache.get(cacheKey);
+    if (hit) {
+      res.status(hit.status).json(hit.data);
+      return;
+    }
+
+    const queryGraphql = async (term: string) => {
+      const gqlRes = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          query: `query ($search: String) {
+            Page(perPage: 10) {
+              media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+                id
+                idMal
+                format
+                seasonYear
+                episodes
+                title { romaji english native }
+              }
+            }
+          }`,
+          variables: { search: term },
+        }),
+      });
+      if (!gqlRes.ok) return [];
+      const json: any = await gqlRes.json().catch(() => null);
+      return Array.isArray(json?.data?.Page?.media) ? json.data.Page.media : [];
+    };
+
+    try {
+      let candidates = await queryGraphql(searchTitle);
+      if (candidates.length === 0 && searchTitle !== rawTitle) {
+        candidates = await queryGraphql(rawTitle);
+      }
+
+      if (candidates.length === 0) {
+        res.status(404).json({ success: false, error: 'No AniList match found' });
+        return;
+      }
+
+      const norm = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      const targetNorm = norm(rawTitle);
+
+      const best = [...candidates].sort((a, b) => {
+        const score = (m: any) => {
+          let pts = 0;
+          const eng = norm(m.title?.english || '');
+          const rom = norm(m.title?.romaji || '');
+          if (eng === targetNorm || rom === targetNorm) pts += 100;
+          else if (eng.includes(targetNorm) || rom.includes(targetNorm)) pts += 40;
+          if (formatHint === 'MOVIE' && m.format === 'MOVIE') pts += 50;
+          if (formatHint === 'TV' && (m.format === 'TV' || m.format === 'ONA')) pts += 50;
+          if (year > 0 && m.seasonYear === year) pts += 35;
+          if (season > 1 && (eng.includes(`season ${season}`) || rom.includes(`${season}`))) pts += 45;
+          return pts;
+        };
+        return score(b) - score(a);
+      })[0];
+
+      const payload = {
+        success: true,
+        anilistId: best.id,
+        malId: best.idMal || null,
+        title: best.title?.english || best.title?.romaji || rawTitle,
+        format: best.format || null,
+        seasonYear: best.seasonYear || null,
+      };
+
+      if (anilistCache.size >= 4000) {
+        const oldest = anilistCache.keys().next().value;
+        if (oldest) anilistCache.delete(oldest);
+      }
+      anilistCache.set(cacheKey, { status: 200, data: payload });
+      res.json(payload);
+    } catch (err: any) {
+      res.status(502).json({ success: false, error: err?.message || 'AniList upstream error' });
+    }
   });
 
   if (process.env.NODE_ENV !== 'production') {

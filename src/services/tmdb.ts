@@ -95,6 +95,8 @@ export interface TmdbMediaDetails extends TmdbCatalogItem {
   numberOfEpisodes: number | null;
   seasons: TmdbSeasonInfo[];
   genres: TmdbGenre[];
+  originalLanguage?: string;
+  originCountries?: string[];
   cast: TmdbCastMember[];
   recommendations: TmdbCatalogItem[];
   backdropGallery: string[];
@@ -155,13 +157,13 @@ export function createCastAvatarFallback(name: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
     <defs>
       <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#170928"/>
-        <stop offset="100%" stop-color="#090612"/>
+        <stop offset="0%" stop-color="#18181d"/>
+        <stop offset="100%" stop-color="#09090b"/>
       </linearGradient>
     </defs>
     <rect width="300" height="450" fill="url(#g)"/>
-    <circle cx="150" cy="185" r="56" fill="#25103e" stroke="#7e22ce" stroke-width="2"/>
-    <text x="150" y="203" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="800" fill="#d8b4fe" text-anchor="middle">${initials}</text>
+    <circle cx="150" cy="185" r="56" fill="#23232a" stroke="#52525b" stroke-width="2"/>
+    <text x="150" y="203" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="800" fill="#e4e4e7" text-anchor="middle">${initials}</text>
   </svg>`;
 
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -569,10 +571,50 @@ export async function fetchTmdbDetails(
       typeof data.number_of_episodes === 'number' ? data.number_of_episodes : null,
     seasons,
     genres: Array.isArray(data.genres) ? data.genres : [],
+    originalLanguage: data.original_language || undefined,
+    originCountries: Array.isArray(data.origin_country) ? data.origin_country : [],
     cast,
     recommendations,
     backdropGallery,
   };
+}
+
+const anilistLookupCache = new Map<string, number | null>();
+
+export async function resolveAniListId(
+  title: string,
+  options?: { season?: number; year?: string | number; mediaType?: TmdbMediaType }
+): Promise<number | null> {
+  const clean = String(title || '').trim();
+  if (!clean) return null;
+  const season = Math.max(1, Number(options?.season || 1));
+  const year = options?.year ? parseInt(String(options.year), 10) || 0 : 0;
+  const format = options?.mediaType === 'movie' ? 'MOVIE' : 'TV';
+  const cacheKey = `${clean.toLowerCase()}:${season}:${year}:${format}`;
+
+  if (anilistLookupCache.has(cacheKey)) {
+    return anilistLookupCache.get(cacheKey) ?? null;
+  }
+
+  try {
+    const qs = new URLSearchParams({
+      title: clean,
+      season: String(season),
+      format,
+    });
+    if (year > 0) qs.set('year', String(year));
+    const res = await fetch(`/api/anilist/resolve?${qs.toString()}`);
+    if (!res.ok) {
+      anilistLookupCache.set(cacheKey, null);
+      return null;
+    }
+    const data = await res.json();
+    const id = data?.success && typeof data.anilistId === 'number' ? data.anilistId : null;
+    anilistLookupCache.set(cacheKey, id);
+    return id;
+  } catch {
+    return null;
+  }
 }
 
 export async function findByImdbId(
@@ -595,6 +637,69 @@ export async function findByImdbId(
 export interface TmdbEpisodeSummary {
   episodeNumber: number;
   name: string;
+  overview?: string;
+  airDate?: string;
+}
+
+/**
+ * Returns true if a release/air date is strictly in the future relative to today's local date,
+ * or if TMDB marks the title as Planned / In Production / Post Production without a past release.
+ */
+export function isUpcomingDate(
+  dateStr?: string | null,
+  status?: string | null
+): boolean {
+  const raw = String(dateStr || '').trim();
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayIso = `${yyyy}-${mm}-${dd}`;
+
+  if (raw) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return raw > todayIso;
+    }
+    if (/^\d{4}-\d{2}$/.test(raw)) {
+      return raw > `${yyyy}-${mm}`;
+    }
+    if (/^\d{4}$/.test(raw)) {
+      return Number(raw) > yyyy;
+    }
+  }
+
+  const normalizedStatus = String(status || '').toLowerCase().trim();
+  if (
+    normalizedStatus === 'planned' ||
+    normalizedStatus === 'in production' ||
+    normalizedStatus === 'post production' ||
+    normalizedStatus === 'upcoming' ||
+    normalizedStatus === 'rumored'
+  ) {
+    return !raw || raw > todayIso;
+  }
+
+  return false;
+}
+
+export function formatReleaseNote(
+  dateStr?: string | null,
+  fallback = 'Release date TBA'
+): string {
+  const raw = String(dateStr || '').trim();
+  if (!raw) return fallback;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [y, m, d] = raw.split('-').map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    if (!Number.isNaN(dt.getTime())) {
+      return `Releases ${dt.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })}`;
+    }
+  }
+  return `Releasing ${raw}`;
 }
 
 export async function fetchTvSeasonEpisodes(
@@ -609,9 +714,54 @@ export async function fetchTvSeasonEpisodes(
     return eps.map((e) => ({
       episodeNumber: e.episode_number,
       name: e.name || `Episode ${e.episode_number}`,
+      overview: e.overview || '',
+      airDate: e.air_date || '',
     }));
   } catch {
     return [];
+  }
+}
+
+export interface TmdbReviewItem {
+  id: string;
+  author: string;
+  content: string;
+  rating: number | null;
+  createdAt: string;
+}
+
+export async function fetchTmdbTrailerAndReviews(
+  mediaType: TmdbMediaType,
+  tmdbId: string
+): Promise<{ trailerKey: string | null; reviews: TmdbReviewItem[] }> {
+  const pathPrefix = mediaType === 'tv' ? 'tv' : 'movie';
+  try {
+    const [videosData, reviewsData] = await Promise.all([
+      fetchTmdbJson<any>(`/${pathPrefix}/${encodeURIComponent(tmdbId)}/videos`).catch(() => ({ results: [] })),
+      fetchTmdbJson<any>(`/${pathPrefix}/${encodeURIComponent(tmdbId)}/reviews`).catch(() => ({ results: [] })),
+    ]);
+
+    const videos: any[] = Array.isArray(videosData?.results) ? videosData.results : [];
+    const trailer =
+      videos.find((v) => v.site === 'YouTube' && v.type === 'Trailer' && v.official) ||
+      videos.find((v) => v.site === 'YouTube' && v.type === 'Trailer') ||
+      videos.find((v) => v.site === 'YouTube');
+
+    const rawReviews: any[] = Array.isArray(reviewsData?.results) ? reviewsData.results : [];
+    const reviews: TmdbReviewItem[] = rawReviews.slice(0, 6).map((r) => ({
+      id: String(r.id || Math.random()),
+      author: r.author || 'Viewer',
+      content: String(r.content || '').trim(),
+      rating: typeof r.author_details?.rating === 'number' ? r.author_details.rating : null,
+      createdAt: r.created_at ? String(r.created_at).slice(0, 10) : '',
+    }));
+
+    return {
+      trailerKey: trailer?.key || null,
+      reviews,
+    };
+  } catch {
+    return { trailerKey: null, reviews: [] };
   }
 }
 
@@ -880,5 +1030,223 @@ export async function queryServerCatalogPage(options: {
     items,
   };
 }
+
+export async function fetchTmdbAnimeFeed(
+  shelf: 'trending' | 'top_rated' | 'retro_classics' | 'movies',
+  page = 1
+): Promise<TmdbCatalogPage> {
+  const genresMap = await ensureGenreLookup();
+
+  if (shelf === 'movies') {
+    const data = await fetchTmdbJson<any>('/discover/movie', {
+      with_genres: '16',
+      with_original_language: 'ja',
+      sort_by: 'popularity.desc',
+      'vote_count.gte': 100,
+      page,
+    });
+    const items = (Array.isArray(data.results) ? data.results : []).map((r: any) =>
+      normalizeTmdbItem(r, 'movie', genresMap)
+    );
+    return {
+      page: data.page || page,
+      totalPages: Math.min(data.total_pages || 1, 500),
+      totalResults: data.total_results || items.length,
+      items,
+    };
+  }
+
+  const extraParams: Record<string, string | number | boolean> =
+    shelf === 'top_rated'
+      ? { sort_by: 'vote_average.desc', 'vote_count.gte': 350 }
+      : shelf === 'retro_classics'
+      ? {
+          sort_by: 'popularity.desc',
+          'first_air_date.lte': '2006-12-31',
+          'vote_count.gte': 120,
+        }
+      : { sort_by: 'popularity.desc', 'vote_count.gte': 80 };
+
+  const data = await fetchTmdbJson<any>('/discover/tv', {
+    with_genres: '16',
+    with_original_language: 'ja',
+    ...extraParams,
+    page,
+  });
+  const items = (Array.isArray(data.results) ? data.results : []).map((r: any) =>
+    normalizeTmdbItem(r, 'tv', genresMap)
+  );
+  return {
+    page: data.page || page,
+    totalPages: Math.min(data.total_pages || 1, 500),
+    totalResults: data.total_results || items.length,
+    items,
+  };
+}
+
+const KIDS_CARTOON_ALLOWLIST_IDS = new Set([
+  '456', // The Simpsons (TV)
+  '35',  // The Simpsons Movie
+]);
+
+const ADULT_ANIMATION_BLOCKLIST_IDS = new Set([
+  '1434',   // Family Guy
+  '2190',   // South Park
+  '60625',  // Rick and Morty
+  '1433',   // American Dad!
+  '94954',  // Hazbin Hotel
+  '131927', // Helluva Boss
+  '2527',   // Beavis and Butt-Head (1993)
+  '33622',  // Beavis and Butt-Head (revival)
+  '202555', // Mike Judge's Beavis and Butt-Head
+  '61222',  // BoJack Horseman
+  '72636',  // Big Mouth
+  '10283',  // Archer
+  '1100',   // Robot Chicken
+  '95557',  // Invincible
+  '128839', // Velma
+  '136315', // The Legend of Vox Machina
+  '2404',   // Aqua Teen Hunger Force
+  '615',    // Futurama
+  '32726',  // Bob's Burgers
+  '2122',   // King of the Hill
+  '12971',  // Drawn Together
+  '73021',  // Disenchantment
+  '88985',  // Harley Quinn
+  '97065',  // Solar Opposites
+  '126485', // Moving / Adult
+  '154524', // Creature Commandos
+  '213017', // Sausage Party: Foodtopia
+]);
+
+const ADULT_ANIMATION_TITLE_RE =
+  /\b(family guy|beavis\s*(?:&|and)\s*butt[\s-]*head|hazbin hotel|helluva boss|south park|rick and morty|american dad|bojack horseman|big mouth|human resources|archer|robot chicken|aqua teen|king of the hill|bob'?s burgers|drawn together|brickleberry|paradise pd|mr\.?\s*pickles|harley quinn|sausage party|velma|invincible|castlevania|vox machina|creature commandos|solar opposites|inside job|disenchantment|f is for family|close enough|smiling friends|moral orel|superjail|venture bros|metalocalypse|ugly americans|the cleveland show|cleveland show|futurama|fritz the cat|heavy metal|blue eye samurai|scavengers reign|primal|pantheon|krapopolis|grimsburg|housebroken|blessing the harts|duncanville|hoops|chicago party aunt|mulligan|exploding kittens|tuca & bertie|tuca and bertie|final space|love, death & robots)\b/i;
+
+export function isKidsCartoonSafe(item: TmdbCatalogItem): boolean {
+  if (KIDS_CARTOON_ALLOWLIST_IDS.has(String(item.tmdbId))) {
+    return true;
+  }
+  if (/^(the\s+)?simpsons\b/i.test(item.title || '')) {
+    return true;
+  }
+  if (ADULT_ANIMATION_BLOCKLIST_IDS.has(String(item.tmdbId))) {
+    return false;
+  }
+  if (ADULT_ANIMATION_TITLE_RE.test(item.title || '')) {
+    return false;
+  }
+
+  const gids = Array.isArray(item.genreIds) ? item.genreIds : [];
+  // Require Kids (10762) or Family (10751) when genres are present so uncategorized adult comedy animations never slip in
+  if (gids.length > 0 && gids.includes(16)) {
+    return gids.includes(10762) || gids.includes(10751);
+  }
+  return true;
+}
+
+export async function fetchTmdbCartoonsFeed(
+  shelf: 'trending' | 'top_rated' | 'retro_classics' | 'movies',
+  page = 1
+): Promise<TmdbCatalogPage> {
+  const genresMap = await ensureGenreLookup();
+
+  if (shelf === 'movies') {
+    const data = await fetchTmdbJson<any>('/discover/movie', {
+      with_genres: '16,10751',
+      with_original_language: 'en',
+      include_adult: false,
+      sort_by: 'popularity.desc',
+      'vote_count.gte': 120,
+      page,
+    });
+    const items = (Array.isArray(data.results) ? data.results : [])
+      .map((r: any) => normalizeTmdbItem(r, 'movie', genresMap))
+      .filter(isKidsCartoonSafe);
+    return {
+      page: data.page || page,
+      totalPages: Math.min(data.total_pages || 1, 500),
+      totalResults: data.total_results || items.length,
+      items,
+    };
+  }
+
+  const extraParams: Record<string, string | number | boolean> =
+    shelf === 'top_rated'
+      ? { sort_by: 'vote_average.desc', 'vote_count.gte': 180 }
+      : shelf === 'retro_classics'
+      ? {
+          sort_by: 'popularity.desc',
+          'first_air_date.lte': '2010-12-31',
+          'vote_count.gte': 60,
+        }
+      : { sort_by: 'popularity.desc', 'vote_count.gte': 40 };
+
+  const [kidsData, familyData, simpsonsRaw] = await Promise.all([
+    fetchTmdbJson<any>('/discover/tv', {
+      with_genres: '16,10762',
+      with_original_language: 'en',
+      include_adult: false,
+      ...extraParams,
+      page,
+    }).catch(() => ({ results: [], page, total_pages: 1, total_results: 0 })),
+    fetchTmdbJson<any>('/discover/tv', {
+      with_genres: '16,10751',
+      with_original_language: 'en',
+      include_adult: false,
+      ...extraParams,
+      page,
+    }).catch(() => ({ results: [], page, total_pages: 1, total_results: 0 })),
+    page === 1 && (shelf === 'trending' || shelf === 'retro_classics')
+      ? fetchTmdbJson<any>('/tv/456').catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  const mergedRaw = [
+    ...(Array.isArray(kidsData.results) ? kidsData.results : []),
+    ...(Array.isArray(familyData.results) ? familyData.results : []),
+  ];
+
+  const seenIds = new Set<string>();
+  const items: TmdbCatalogItem[] = [];
+
+  if (simpsonsRaw && simpsonsRaw.id) {
+    const simpsonsItem = normalizeTmdbItem(simpsonsRaw, 'tv', genresMap);
+    seenIds.add(simpsonsItem.id);
+    items.push(simpsonsItem);
+  }
+
+  for (const r of mergedRaw) {
+    const norm = normalizeTmdbItem(r, 'tv', genresMap);
+    if (seenIds.has(norm.id)) continue;
+    if (!isKidsCartoonSafe(norm)) continue;
+    seenIds.add(norm.id);
+    items.push(norm);
+  }
+
+  return {
+    page: kidsData.page || familyData.page || page,
+    totalPages: Math.min(Math.max(kidsData.total_pages || 1, familyData.total_pages || 1), 500),
+    totalResults: Math.max(kidsData.total_results || 0, familyData.total_results || 0) || items.length,
+    items,
+  };
+}
+
+export async function searchTmdbAnimation(
+  query: string,
+  page = 1,
+  options?: { kidsOnly?: boolean }
+): Promise<TmdbCatalogPage> {
+  const res = await searchTmdbMulti(query, page);
+  const animated = res.items.filter(
+    (i) => Array.isArray(i.genreIds) && i.genreIds.includes(16)
+  );
+  const pool = animated.length > 0 ? animated : res.items;
+  const finalItems = options?.kidsOnly ? pool.filter(isKidsCartoonSafe) : pool;
+  return {
+    ...res,
+    items: finalItems,
+  };
+}
+
 
 

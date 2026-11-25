@@ -24,6 +24,8 @@ import { GameBox3DEngine } from './GameBox3DEngine';
 import { GameBox3DModal } from './GameBox3DModal';
 import { AdSenseBanner } from './AdSenseBanner';
 import { getGameReviews, saveUserReview } from '../reviews';
+import { useTheme } from '../context/ThemeContext';
+import { ConsoleBoxOverlay } from './ConsoleBoxOverlay';
 
 
 export const SHADER_PRESETS = [
@@ -36,6 +38,7 @@ export const SHADER_PRESETS = [
 
 export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites = [], toggleFavorite }) => {
   const activeGame = selectedGame || item;
+  const { isNetflix, isPopcorn, isGamOnl, isKaleidescape, settings, updateSettings } = useTheme();
 
   const containerRef = useRef(null);
   const iframeRef = useRef(null);
@@ -45,7 +48,7 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
 
   // Retro Shader Filter State (EJS_shaders)
   const [selectedShader, setSelectedShader] = useState(() => {
-    return localStorage.getItem('retro_shader_preference') || 'none';
+    return settings?.shaderPreset || localStorage.getItem('retro_shader_preference') || 'none';
   });
 
   // Dedicated PSP WebAssembly Mode
@@ -75,6 +78,9 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
     const newShader = e.target.value;
     setSelectedShader(newShader);
     localStorage.setItem('retro_shader_preference', newShader);
+    if (updateSettings) {
+      updateSettings({ shaderPreset: newShader });
+    }
 
     const preset = SHADER_PRESETS.find(s => s.id === newShader);
     const shaderVal = preset ? preset.ejsShader : '';
@@ -200,29 +206,62 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
   const isArtBook = Boolean(activeGame.pages || (activeGame.viewUrl && !activeGame.streamUrl) || activeGame.author);
   const poster = activeGame.poster || activeGame.posterUrl || activeGame.coverUrl || activeGame.boxFront;
   const cartridge = activeGame.cartridgeUrl || activeGame.cartridge;
-  const isWebPort = activeGame.consoleType === 'WebPort' || activeGame.consoleType === 'Web Port' || activeGame.isWebPort || activeGame.engine === 'web' || activeGame.engine === 'iframe' || isGta || isNfs;
+  const isWebPort = activeGame.consoleType === 'WebPort' || activeGame.consoleType === 'Web Port' || activeGame.isWebPort || activeGame.engine === 'web' || activeGame.engine === 'iframe' || Boolean(activeGame.embed_url) || isGta || isNfs;
   const isClassicConsole = !isWebPort && !isFlash && !isArtBook && !isPsp;
 
   let streamUrl = '';
   if (isArtBook || isWebPort || isFlash) {
-    streamUrl = activeGame.streamUrl || activeGame.url || activeGame.viewUrl;
+    streamUrl = activeGame.embed_url || activeGame.streamUrl || activeGame.url || activeGame.viewUrl;
   }
 
   const isPs1 = activeGame.consoleType === 'PS1' || activeGame.consoleType === 'PlayStation' || activeGame.consoleType === 'PSX';
 
   return (
-    <div className="w-full min-h-screen bg-[#07080e] text-[#f7f7fb] flex flex-col font-sans select-none overflow-x-hidden">
+    <div
+      className={`w-full min-h-screen flex flex-col font-sans select-none overflow-x-hidden ${
+        isNetflix
+          ? 'bg-[#141414] text-white'
+          : isPopcorn
+          ? 'bg-[#0c0e14] text-white'
+          : isGamOnl
+          ? 'bg-[#0d0f14] text-white'
+          : isKaleidescape
+          ? 'bg-[#000000] text-white'
+          : 'bg-[#08080a] text-[#f7f7fb]'
+      }`}
+    >
       {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 bg-[#0c0d16]/95 backdrop-blur-md border-b border-[#1f2030] px-6 py-3.5 flex items-center justify-between gap-4 shadow-lg">
+      <header
+        className={`sticky top-0 z-30 backdrop-blur-md border-b px-6 py-3.5 flex items-center justify-between gap-4 shadow-lg ${
+          isNetflix
+            ? 'bg-[#141414]/95 border-[#262626]'
+            : isPopcorn
+            ? 'bg-[#0c0e14]/95 border-[#232c40]'
+            : isGamOnl
+            ? 'bg-[#0d0f14]/95 border-[#22293b]'
+            : isKaleidescape
+            ? 'bg-[#05080f]/95 border-[#1b3352]'
+            : 'bg-[#0c0d10]/95 border-[#222228]'
+        }`}
+      >
         <div className="flex items-center gap-4 min-w-0">
-
-
           <button
             onClick={handleClose}
-            className="p-2.5 text-neutral-300 hover:text-white bg-[#151624] hover:bg-[#202235] border border-[#27283c] rounded-xl transition-all cursor-pointer shadow-sm hover:scale-105"
+            className={`w-9 h-9 rounded-full border grid place-items-center transition-all cursor-pointer shadow-sm ${
+              isNetflix
+                ? 'bg-[#222222] hover:bg-[#2f2f2f] border-[#383838] text-neutral-200 hover:text-white'
+                : isPopcorn
+                ? 'bg-[#141a26] hover:bg-[#1e283b] border-[#2e3b55] text-neutral-200 hover:text-white'
+                : isGamOnl
+                ? 'bg-[#13161f] hover:bg-[#1c2231] border-[#252d40] text-neutral-200 hover:text-white'
+                : isKaleidescape
+                ? 'bg-[#0c1626] hover:bg-[#162742] border-[#1f3b5c] text-neutral-200 hover:text-[#f2c94c]'
+                : 'bg-[#18181d] hover:bg-[#272730] border-[#2f2f38] text-neutral-300 hover:text-white'
+            }`}
             title="Return to Catalog"
+            aria-label="Return to Catalog"
           >
-            <X size={18} />
+            <X size={17} />
           </button>
 
           <div className="flex items-center gap-3 min-w-0">
@@ -231,7 +270,7 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
                 {activeGame.title}
               </h1>
               <p className="text-[11px] text-neutral-400 font-medium truncate hidden sm:block">
-                {activeGame.developer || activeGame.publisher} {activeGame.year ? `• ${activeGame.year}` : ''}
+                {activeGame.developer || activeGame.publisher} {activeGame.year ? `· ${activeGame.year}` : ''}
               </p>
             </div>
           </div>
@@ -239,54 +278,47 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
 
         {/* Header Action Controls */}
         <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
-
-
-          {/* Web Port Quick Direct Tab Button */}
           {isWebPort && !isGta && streamUrl && (
             <a
               href={activeGame.url || streamUrl}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#151624] hover:bg-[#202235] border border-[#27283c] hover:border-purple-500/50 rounded-xl text-xs font-bold text-purple-300 transition-all cursor-pointer shadow-sm hover:scale-105"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#18181d] hover:bg-[#23232a] border border-[#2c2c34] rounded-lg text-xs font-bold text-neutral-200 transition-all cursor-pointer"
               title="Open this web port in a dedicated browser tab"
             >
-              <ExternalLink size={14} className="text-purple-400 shrink-0" />
+              <ExternalLink size={14} className="shrink-0" />
               <span className="hidden sm:inline">Direct Tab</span>
             </a>
           )}
 
-          {/* Dedicated PPSSPP WebAssembly Indicator */}
           {isPsp && (
-            <div className="flex items-center gap-1.5 bg-blue-950/80 border border-blue-600/70 rounded-xl px-3 py-1.5 shadow-sm">
-              <Gamepad2 size={15} className="text-blue-400 shrink-0" />
-              <span className="text-xs font-black text-blue-300">PPSSPP WebAssembly</span>
+            <div className="flex items-center gap-1.5 bg-[#18181d] border border-[#2c2c34] rounded-lg px-3 py-1.5">
+              <Gamepad2 size={15} className="text-[#22c55e] shrink-0" />
+              <span className="text-xs font-bold text-neutral-200">PPSSPP WebAssembly</span>
             </div>
           )}
 
-
-
-          {/* Favorite Star Button */}
           {activeGame && typeof toggleFavorite === 'function' && (
             <button
               type="button"
               onClick={() => toggleFavorite(activeGame.id || activeGame.slug)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-sm ${
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 favorites?.includes(activeGame.id || activeGame.slug)
                   ? 'bg-amber-500 text-black hover:bg-amber-400'
-                  : 'bg-[#151624] hover:bg-[#202235] text-amber-300 border border-amber-500/40'
+                  : 'bg-[#18181d] hover:bg-[#23232a] text-neutral-200 border border-[#2c2c34]'
               }`}
-              title={favorites?.includes(activeGame.id || activeGame.slug) ? "Remove from Favorites" : "Add to Favorites"}
+              title={favorites?.includes(activeGame.id || activeGame.slug) ? 'Remove from Favorites' : 'Add to Favorites'}
             >
-              <Star size={15} fill={favorites?.includes(activeGame.id || activeGame.slug) ? "currentColor" : "none"} />
+              <Star size={15} fill={favorites?.includes(activeGame.id || activeGame.slug) ? 'currentColor' : 'none'} />
               <span className="hidden sm:inline">
-                {favorites?.includes(activeGame.id || activeGame.slug) ? "Favorited" : "Favorite"}
+                {favorites?.includes(activeGame.id || activeGame.slug) ? 'Favorited' : 'Favorite'}
               </span>
             </button>
           )}
 
           <button
             onClick={() => setIs3DModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-purple-300 bg-purple-950/50 hover:bg-purple-900/60 border border-purple-800/60 rounded-xl transition-all cursor-pointer shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-neutral-100 bg-[#18181d] hover:bg-[#24242b] border border-[#2c2c34] rounded-lg transition-all cursor-pointer"
             title="Open 3D Box & Media Viewer"
           >
             <Rotate3d size={15} />
@@ -295,7 +327,7 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
 
           <button
             onClick={handleRestart}
-            className="p-2 text-neutral-300 hover:text-white bg-[#151624] hover:bg-[#202235] border border-[#27283c] rounded-xl transition-colors cursor-pointer"
+            className="p-2 text-neutral-300 hover:text-white bg-[#18181d] hover:bg-[#24242b] border border-[#2c2c34] rounded-lg transition-colors cursor-pointer"
             title="Restart Game"
           >
             <RotateCcw size={15} />
@@ -303,7 +335,11 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
 
           <button
             onClick={toggleFullscreen}
-            className="p-2 text-neutral-300 hover:text-white bg-[#151624] hover:bg-[#202235] border border-[#27283c] rounded-xl transition-colors cursor-pointer"
+            className={`p-2 rounded-lg transition-colors cursor-pointer font-bold ${
+              isNetflix
+                ? 'bg-[#E50914] hover:bg-[#f40612] text-white'
+                : 'bg-white hover:bg-neutral-200 text-black'
+            }`}
             title="Toggle Fullscreen"
           >
             {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
@@ -312,7 +348,7 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
       </header>
 
       {/* Primary Game Stage */}
-      <section className="w-full bg-[#000] border-b border-[#1d1e2e] flex flex-col items-center justify-center relative">
+      <section className={`w-full bg-[#000] border-b flex flex-col items-center justify-center relative ${isNetflix ? 'border-[#262626]' : 'border-[#222228]'}`}>
         <div 
           ref={containerRef} 
           className={`relative w-full h-[540px] sm:h-[620px] md:h-[680px] max-w-[1240px] mx-auto bg-black flex items-center justify-center overflow-hidden ${
@@ -619,21 +655,23 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
 
       {/* Main Content Area: Rich Metadata & 3D Box Showcase */}
       <main className="max-w-6xl mx-auto w-full px-6 py-10 space-y-10 flex-1">
-        
         {/* Rich Metadata Section */}
-        <section className="bg-[#0e0f18] border border-[#202235] rounded-2xl p-6 sm:p-8 shadow-2xl">
+        <section className={`border rounded-2xl p-6 sm:p-8 shadow-2xl ${isNetflix ? 'bg-[#181818] border-[#2a2a2a]' : 'bg-[#111115] border-[#232329]'}`}>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            
             {/* 2D Poster Thumbnail */}
             <div className="lg:col-span-3 flex flex-col items-center gap-3">
-              <div className="w-full max-w-[220px] aspect-[3/4] rounded-xl overflow-hidden border border-[#2a2c42] shadow-xl bg-[#090a12]">
-                <SafeGameImage 
-                  primaryUrl={poster} 
+              <div className="relative w-full max-w-[220px] aspect-[3/4] rounded-xl overflow-hidden border border-[#2a2a32] shadow-xl bg-[#09090b]">
+                <SafeGameImage
+                  primaryUrl={poster}
                   fallbackUrl={activeGame.boxFront}
-                  alt={activeGame.title} 
+                  alt={activeGame.title}
                   title={activeGame.title}
                   consoleType={activeGame.consoleType}
-                  className="w-full h-full object-cover" 
+                  className="w-full h-full object-cover"
+                />
+                <ConsoleBoxOverlay
+                  consoleType={activeGame.consoleType}
+                  mode={settings?.posterLabelMode || 'labeled'}
                 />
               </div>
               <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
@@ -644,15 +682,14 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
             {/* Center Info Details */}
             <div className="lg:col-span-5 space-y-4">
               <div>
-                <div className="flex items-center gap-2 mb-2 flex-wrap">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                    {activeGame.consoleType}
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    {activeGame.year}
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                    <Star size={10} fill="currentColor" /> {Number(activeGame.rating || 9.0).toFixed(1)} / 10
+                <div className="flex items-center gap-2 mb-2 text-xs font-bold text-neutral-400 tabular-nums flex-wrap">
+                  <span className="uppercase tracking-wider text-neutral-200">{activeGame.consoleType}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{activeGame.year}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1 text-white">
+                    <Star size={12} className="text-[#22c55e] fill-[#22c55e]" />
+                    {Number(activeGame.rating || 9.0).toFixed(1)} / 10
                   </span>
                 </div>
                 <h2 className="text-xl sm:text-2xl font-black text-white leading-tight">
@@ -665,7 +702,7 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
               </p>
 
               {/* Specs Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-[#1d1f30]">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-[#232329]">
                 <div>
                   <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Developer</div>
                   <div className="text-xs font-bold text-neutral-200 truncate">{activeGame.developer || 'Unknown'}</div>
@@ -686,15 +723,15 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
             </div>
 
             {/* LaunchBox 3D Box Engine Showcase Card */}
-            <div className="lg:col-span-4 bg-[#0a0b12] border border-[#23253b] rounded-xl p-4 flex flex-col items-center">
-              <div className="w-full flex items-center justify-between pb-3 border-b border-[#1c1e30] mb-3">
-                <div className="flex items-center gap-1.5 text-xs font-black text-purple-300 uppercase tracking-wide">
+            <div className={`lg:col-span-4 border rounded-xl p-4 flex flex-col items-center ${isNetflix ? 'bg-[#141414] border-[#292929]' : 'bg-[#0b0b0e] border-[#232329]'}`}>
+              <div className="w-full flex items-center justify-between pb-3 border-b border-[#222228] mb-3">
+                <div className="flex items-center gap-1.5 text-xs font-black text-neutral-200 uppercase tracking-wide">
                   <Box size={14} />
-                  <span>LaunchBox 3D Engine</span>
+                  <span>3D Box Viewer</span>
                 </div>
                 <button
                   onClick={() => setIs3DModalOpen(true)}
-                  className="text-[10px] font-bold text-purple-400 hover:text-purple-300 hover:underline flex items-center gap-1 cursor-pointer"
+                  className={`text-[10px] font-bold hover:underline flex items-center gap-1 cursor-pointer ${isNetflix ? 'text-[#E50914]' : 'text-neutral-300 hover:text-white'}`}
                 >
                   <Rotate3d size={11} />
                   <span>Fullscreen 3D</span>
@@ -727,46 +764,43 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
               </div>
 
               <p className="text-[10px] text-neutral-500 text-center mt-2">
-                Click & drag box to rotate in 3D • Eject media toggle
+                Click &amp; drag box to rotate in 3D · Eject media toggle
               </p>
             </div>
-
           </div>
         </section>
 
-        {/* Google AdSense Monetization Banner */}
         <AdSenseBanner slotId="player-view-mid-banner" format="horizontal" />
 
         {/* Community Reviews & Ratings Section */}
-        <section className="bg-[#0e0f18] border border-[#202235] rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#1d1f30]">
+        <section className={`border rounded-2xl p-6 sm:p-8 shadow-xl space-y-6 ${isNetflix ? 'bg-[#181818] border-[#2a2a2a]' : 'bg-[#111115] border-[#232329]'}`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#232329]">
             <div>
               <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                <MessageSquare size={18} className="text-purple-400" />
-                Community Reviews & Ratings
+                <MessageSquare size={18} className={isNetflix ? 'text-[#E50914]' : 'text-white'} />
+                Community Reviews &amp; Ratings
               </h3>
               <p className="text-xs text-neutral-400">Share your gameplay experience, tips, and impressions</p>
             </div>
-            <div className="flex items-center gap-2 bg-[#141524] px-4 py-2 rounded-xl border border-[#27283c]">
+            <div className="flex items-center gap-2 bg-[#16161b] px-4 py-2 rounded-xl border border-[#27272e]">
               <span className="text-xs text-neutral-400">Rating:</span>
-              <div className="flex items-center gap-1 text-amber-400 font-bold text-sm">
+              <div className="flex items-center gap-1 text-[#22c55e] font-bold text-sm tabular-nums">
                 <Star size={14} fill="currentColor" />
                 <span>{Number(activeGame.rating || 9.0).toFixed(1)} / 10</span>
               </div>
             </div>
           </div>
 
-          {/* Add Review Form */}
-          <form onSubmit={handlePostReview} className="bg-[#121320] border border-[#23253b] rounded-xl p-4 sm:p-5 space-y-3">
+          <form onSubmit={handlePostReview} className={`border rounded-xl p-4 sm:p-5 space-y-3 ${isNetflix ? 'bg-[#141414] border-[#282828]' : 'bg-[#141418] border-[#25252d]'}`}>
             <div className="flex flex-col sm:flex-row gap-3">
               <input
                 type="text"
                 placeholder="Your Gamer Tag / Handle (e.g. RetroAce)"
                 value={reviewHandle}
                 onChange={(e) => setReviewHandle(e.target.value)}
-                className="flex-1 bg-[#0a0b12] border border-[#25273f] rounded-lg px-3.5 py-2 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-purple-500"
+                className="flex-1 bg-[#0a0a0d] border border-[#27272e] rounded-lg px-3.5 py-2 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/40"
               />
-              <div className="flex items-center gap-2 self-start sm:self-center px-3 py-1.5 bg-[#0a0b12] border border-[#25273f] rounded-lg">
+              <div className="flex items-center gap-2 self-start sm:self-center px-3 py-1.5 bg-[#0a0a0d] border border-[#27272e] rounded-lg">
                 <span className="text-[10px] text-neutral-400 font-bold">Stars:</span>
                 <div className="flex items-center gap-1">
                   {[1, 2, 3, 4, 5].map((star) => (
@@ -792,14 +826,18 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
               value={reviewComment}
               onChange={(e) => setReviewComment(e.target.value)}
               rows={3}
-              className="w-full bg-[#0a0b12] border border-[#25273f] rounded-lg p-3 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-purple-500 resize-none"
+              className="w-full bg-[#0a0a0d] border border-[#27272e] rounded-lg p-3 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/40 resize-none"
             />
 
             <div className="flex justify-end">
               <button
                 type="submit"
                 disabled={!reviewComment.trim()}
-                className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white rounded-lg text-xs font-extrabold cursor-pointer transition-all shadow-md"
+                className={`flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-extrabold cursor-pointer transition-all disabled:opacity-40 ${
+                  isNetflix
+                    ? 'bg-[#E50914] hover:bg-[#f40612] text-white'
+                    : 'bg-white hover:bg-neutral-200 text-black'
+                }`}
               >
                 <Send size={13} />
                 <span>Submit Review</span>
@@ -807,7 +845,6 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
             </div>
           </form>
 
-          {/* Reviews List */}
           <div className="space-y-3 pt-2">
             {reviews.length === 0 ? (
               <div className="text-center py-6 text-neutral-500 text-xs">
@@ -815,9 +852,9 @@ export const PlayerView = ({ selectedGame, item, onClose, onRestart, favorites =
               </div>
             ) : (
               reviews.map((rev) => (
-                <div key={rev.id} className="bg-[#121320] border border-[#202235] rounded-xl p-4 space-y-1.5">
+                <div key={rev.id} className="bg-[#141418] border border-[#232329] rounded-xl p-4 space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-extrabold text-purple-300">{rev.handle}</span>
+                    <span className="font-extrabold text-white">{rev.handle}</span>
                     <div className="flex items-center gap-1 text-amber-400">
                       {Array.from({ length: rev.rating || 5 }).map((_, i) => (
                         <Star key={i} size={11} fill="currentColor" />
